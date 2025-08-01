@@ -7,12 +7,17 @@ import chisel3.util._
 // // import boom.exu.ygjk._
 // import boom.v3.util._
 
-// 
 
-object TopPara{
-  val ReduceWidth = 512
-  val ResultWidth = 32
-  val cmptreelayers = 4
-  val P3AddNum = 4
-  val P2AddNum = ReduceWidth / (P3AddNum * 16)
+
+trait CUTEImplParameters{
+  val ReduceWidth :Int = 512
+  val ResultWidth :Int = 32
+  val cmptreelayers :Int = 4
+  val P3AddNum :Int = 4
+  val P2AddNum :Int = ReduceWidth / (P3AddNum * 16)
 }
+
+class Parameters{}
+
+class CuteModule(implicit val p: Parameters) extends Module with CUTEImplParameters
+class CuteBundle(implicit val p: Parameters) extends Bundle with CUTEImplParameters

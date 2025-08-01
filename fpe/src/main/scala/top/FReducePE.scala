@@ -1,17 +1,8 @@
 //记得修改if相关，改成mux
 package top
-// package cute
 
 import chisel3._
 import chisel3.util._
-import top.TopPara._
-// import org.chipsalliance.cde.config._
-// // import boom.exu.ygjk._
-// import boom.v3.util._
-import java.util.ResourceBundle
-// import com.sourcegraph.semanticdb_javac.Result
-// import scala.compiletime.ops.float
-import java.nio.channels.Pipe
 
 class RawFloatException extends Bundle {
     val is_nan = Bool()
@@ -45,7 +36,7 @@ class RawFloatException extends Bundle {
     }
 }
 
-class CLZ(len: Int) extends Module {
+class CLZ(len: Int)(implicit p: Parameters) extends CuteModule {
 
   val inWidth = len
   val outWidth = (inWidth - 1).U.getWidth
@@ -58,12 +49,12 @@ class CLZ(len: Int) extends Module {
   io.out := PriorityEncoder(io.in.asBools.reverse)
 }
 
-class FDecodeResult extends Bundle{
+class FDecodeResult(implicit p: Parameters) extends CuteBundle{
     val Int8Vec = Vec(ReduceWidth/8, UInt(9.W))
     val TF32Vec = Vec(ReduceWidth/16, new RawFloat(8, 11))
 }
 
-class FVecDecoder extends Module {
+class FVecDecoder(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(UInt(ReduceWidth.W))
         val opcode = Input(UInt(3.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:UI8
@@ -126,7 +117,7 @@ class FVecDecoder extends Module {
 
 }
 
-class CmpTree extends Module {
+class CmpTree(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle {
         val in    = Input(Vec(ReduceWidth/16 + 1, UInt(9.W)))
         val out   = Output(UInt(9.W))
@@ -155,13 +146,13 @@ class CmpTree extends Module {
     io.out := Cat((0 until 9).map(k => (inVec0(k) & mask(8)).orR))
 }
 
-class CmpTreeP0Res (layers:Int) extends Bundle{
+class CmpTreeP0Res(layers:Int)(implicit p: Parameters) extends CuteBundle{
     val part1   = UInt((ReduceWidth/16 + 1).W)   //第6层mask（也就是mask(5)）,用于算后续的mask
     val part2   = Vec(9 - layers, UInt((ReduceWidth/16 + 1).W)) //6层以后的数据传到下一层
     val part3   = UInt(layers.W) //前6层的结果
 }
 
-class CmpTreeP0 (layers:Int) extends Module {
+class CmpTreeP0(layers:Int)(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle {
         val in    = Input(Vec(ReduceWidth/16 + 1, UInt(9.W)))
         val out   = Output(new CmpTreeP0Res(layers))
@@ -202,7 +193,7 @@ class CmpTreeP0 (layers:Int) extends Module {
     io.out.part3 := Cat((0 until layers).map(k => res(k)))
 }
 
-class CmpTreeP1 (layers : Int)extends Module {
+class CmpTreeP1(layers : Int)(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle {
         val in    = Input(new CmpTreeP0Res(layers))
         val out   = Output(UInt(9.W))
@@ -237,7 +228,7 @@ class CmpTreeP1 (layers : Int)extends Module {
     io.out := Cat(io.in.part3, partres)
 }
 
-class FPipe0Result extends Bundle{
+class FPipe0Result(implicit p: Parameters) extends CuteBundle{
     val Product0 = Vec(ReduceWidth/16, SInt(23.W))
     val Product1 = Vec(ReduceWidth/16, SInt(17.W))
     val CMantissa = SInt(32.W)
@@ -248,7 +239,7 @@ class FPipe0Result extends Bundle{
     val opcode = UInt(3.W)   //0:Int8, 1:FP16, 2:BF16, 3:TF32
 }
 
-class FPipe1Result extends Bundle{
+class FPipe1Result(implicit p: Parameters) extends CuteBundle{
     val Product1 = Vec(ReduceWidth/16, SInt(17.W))
     val CMantissa = SInt(32.W)
     val Product0 = Vec(ReduceWidth/16 + 1, SInt(26.W)) //每个向量的尾数右移结果
@@ -258,7 +249,7 @@ class FPipe1Result extends Bundle{
     val SignVec = Vec(ReduceWidth/16 + 1, Bool()) //每个向量的符号位
 }
 
-class FPipe2Result extends Bundle{
+class FPipe2Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes0 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W))
     val ReduceRes1 = Vec(P3AddNum, SInt((17 + log2Ceil(P2AddNum)).W)) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
     val CMantissa = SInt(32.W) // C的尾数
@@ -267,7 +258,7 @@ class FPipe2Result extends Bundle{
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
-class FPipe3Result extends Bundle{
+class FPipe3Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes = SInt(32.W) //归约计算结果
     val MaxExp = UInt(9.W)
     val opcode = UInt(2.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
@@ -275,7 +266,7 @@ class FPipe3Result extends Bundle{
 }
 
 // Pipe0的功能是并行完成{计算尾数乘积}和{求阶码最大值，计算右移位数}
-class FReduceMACPipe0 extends Module {
+class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val inA = Input(UInt(ReduceWidth.W))
         val inB = Input(UInt(ReduceWidth.W))
@@ -394,7 +385,7 @@ class FReduceMACPipe0 extends Module {
 }
 
 // Pipe1的功能是将Pipe0的乘积向量尾数右移，得到尾数向量用于归约计算
-class FReduceMACPipe1 extends Module {
+class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe0Result)
         val out = Output(new FPipe1Result)
@@ -460,7 +451,7 @@ class FReduceMACPipe1 extends Module {
     io.out.SignVec := io.in.SignVec
 }
 
-class FReduceMACPipe2 extends Module {
+class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe1Result)
         val out = Output(new FPipe2Result)
@@ -497,7 +488,7 @@ class FReduceMACPipe2 extends Module {
     io.out.SumException := io.in.SumException
 }
 
-class FReduceMACPipe3 extends Module {
+class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe2Result)
         val out = Output(new FPipe3Result)
@@ -524,7 +515,7 @@ class FReduceMACPipe3 extends Module {
     io.out.SumException := io.in.SumException
 }
 
-class FReduceMACPipe4 extends Module {
+class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe3Result)
         val out = UInt(ResultWidth.W)
@@ -595,7 +586,7 @@ class FReduceMACPipe4 extends Module {
     )
 }
 
-// class top extends Module {
+// class top extends CuteModule {
 //     val io = IO(new Bundle{
 //         val AVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
 //         val BVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
@@ -630,7 +621,7 @@ class FReduceMACPipe4 extends Module {
 
 //这里的top是切好流水的，为方便debug，先写一个单周期的top
 
-class top extends Module {
+class FReducePE(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val AVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
         val BVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
@@ -771,7 +762,9 @@ class top extends Module {
     io.DResult.bits := Pipe4ResReg
 }
 
-// class FReducePE(id:Int)(implicit p: Parameters) extends Module with HWParameters{
+class top (implicit p: Parameters) extends FReducePE {}
+
+// class FReducePE(id:Int)(implicit p: Parameters) extends CuteModule with HWParameters{
 //     val io = IO(new Bundle{
 //         val ReduceA = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
 //         val ReduceB = Flipped(DecoupledIO(UInt(ReduceWidth.W)))

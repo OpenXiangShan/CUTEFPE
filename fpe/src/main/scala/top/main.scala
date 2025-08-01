@@ -11,7 +11,7 @@ import java.io._
 object Main extends App {
   // (new ChiselStage).emitVerilog(new multiplier(12,8))
   val writer = new PrintWriter(new File("top.v"))  //specify the file path
-  writer.write(getVerilogString(new top))
+  writer.write(getVerilogString(new top()(new Parameters())))
   writer.close()
   // println(getVerilogString(new multiplier(12, 8)))
 }
