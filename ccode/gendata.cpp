@@ -1,6 +1,7 @@
 #include "fmac.h"
 #include "FileManager.h"
 #include "myrandom.h"
+#include <cstdint>
 // #define DEBUG
 #define NEW_DIFF_PERCENT 0.0000045 // < 2^(-21) 用来测4个元素的向量
 // #define NEW_DIFF_PERCENT 0.0000009 // < 2^(-20) 用来测8个元素的向量

@@ -359,26 +359,26 @@ DataFile* create_data_file(const char* a_fname, const char* b_fname, const char*
 
 int create_all_types(int dtype, DataFile** df){
     if (dtype == 0){
-        *df = create_data_file("data/int8_a.txt", "data/int8_b.txt", "data/int8_c.txt", "data/int8_d.txt", dtype, 0);
+        *df = create_data_file("int8_a.txt", "int8_b.txt", "int8_c.txt", "int8_d.txt", dtype, 0);
     }
     else if (dtype == 1){
-        *df = create_data_file("data/fp16_a.txt", "data/fp16_b.txt", "data/fp16_c.txt", "data/fp16_d.txt", dtype, 0);
-        // *df = create_data_file("data/fp16_atest.txt", "data/fp16_btest.txt", "data/fp16_ctest.txt", "data/fp16_dtest.txt", dtype, 0);
+        *df = create_data_file("fp16_a.txt", "fp16_b.txt", "fp16_c.txt", "fp16_d.txt", dtype, 0);
+        // *df = create_data_file("fp16_atest.txt", "fp16_btest.txt", "fp16_ctest.txt", "fp16_dtest.txt", dtype, 0);
     }
     else if (dtype == 2){
-        *df = create_data_file("data/bf16_a.txt", "data/bf16_b.txt", "data/bf16_c.txt", "data/bf16_d.txt", dtype, 0);
+        *df = create_data_file("bf16_a.txt", "bf16_b.txt", "bf16_c.txt", "bf16_d.txt", dtype, 0);
     }
     else if (dtype == 3){
-        *df = create_data_file("data/tf32_a.txt", "data/tf32_b.txt", "data/tf32_c.txt", "data/tf32_d.txt", dtype, 0);
+        *df = create_data_file("tf32_a.txt", "tf32_b.txt", "tf32_c.txt", "tf32_d.txt", dtype, 0);
     }
     else if (dtype == 4){
-        *df = create_data_file("data/i8ui8_a.txt", "data/i8ui8_b.txt", "data/i8ui8_c.txt", "data/i8ui8_d.txt", dtype, 0);
+        *df = create_data_file("i8ui8_a.txt", "i8ui8_b.txt", "i8ui8_c.txt", "i8ui8_d.txt", dtype, 0);
     }
     else if (dtype == 5){
-        *df = create_data_file("data/ui8i8_a.txt", "data/ui8i8_b.txt", "data/ui8i8_c.txt", "data/ui8i8_d.txt", dtype, 0);
+        *df = create_data_file("ui8i8_a.txt", "ui8i8_b.txt", "ui8i8_c.txt", "ui8i8_d.txt", dtype, 0);
     }
     else if (dtype == 6){
-        *df = create_data_file("data/ui8ui8_a.txt", "data/ui8ui8_b.txt", "data/ui8ui8_c.txt", "data/ui8ui8_d.txt", dtype, 0);
+        *df = create_data_file("ui8ui8_a.txt", "ui8ui8_b.txt", "ui8ui8_c.txt", "ui8ui8_d.txt", dtype, 0);
     }
     else{
         printf("Invalid dtype: %d\n", dtype);
@@ -583,11 +583,17 @@ int check_sim(DataFile* df, int bitsize, int dtype, Vtop* top, int cycles, int t
     return result;
 }
 
-int main(){
+int main(int argc, char* argv[]){
     int dtype = 3;
     int cycles = 1000000; // 设置模拟周期数
     int bitsize = 128;
     int tolerance = 1;
+
+    if(argc > 1){
+        dtype = atoi(argv[1]);
+        printf("Using dtype from arg: %d\n", dtype);
+    }
+
     DataFile* df = NULL;
     
     int create = create_all_types(dtype, &df);

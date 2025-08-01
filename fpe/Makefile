@@ -33,6 +33,10 @@ endif
 
 TOP = top
 
+#	0			1			2			3			4			5			6
+#	i8i8i32		f16f16f32	bf16bf16f32	tf32tf32f32	i8u8i32		u8i8i32		u8u8i32
+CHECKDATA_TYPE = 3
+
 # Generate C++ in executable form
 VERILATOR_FLAGS += --cc --exe --top $(TOP)
 # Generate makefile dependencies (not shown as complicates the Makefile)
@@ -87,10 +91,16 @@ all:
 	$(MAKE) -j -C obj_dir -f ../Makefile_obj
 
 	@echo
+	@echo "-- GetRandownNums---------------------"
+
+	g++ ../ccode/gendata.cpp -o obj_dir/gendata
+	obj_dir/gendata $(CHECKDATA_TYPE)
+
+	@echo
 	@echo "-- RUN ---------------------"
 	@rm -rf logs
 	@mkdir -p logs
-	obj_dir/V$(TOP)
+	obj_dir/V$(TOP)	$(CHECKDATA_TYPE)
 
 	@echo
 	@echo "-- COVERAGE ----------------"
@@ -116,12 +126,17 @@ vrun:
 #	$(MAKE) -j -C obj_dir -f Vtop.mk
 # 3. Or, call a submakefile where we can override the rules ourselves:
 	$(MAKE) -j -C obj_dir -f ../Makefile_obj
+	@echo
+	@echo "-- GetRandownNums---------------------"
+
+	g++ ../ccode/gendata.cpp -o obj_dir/gendata
+	obj_dir/gendata $(CHECKDATA_TYPE)
 
 	@echo
 	@echo "-- RUN ---------------------"
 	@rm -rf logs
 	@mkdir -p logs
-	obj_dir/V$(TOP)
+	obj_dir/V$(TOP) $(CHECKDATA_TYPE)
 
 	@echo
 	@echo "-- COVERAGE ----------------"

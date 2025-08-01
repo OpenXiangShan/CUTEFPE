@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <math.h>
-
+#include <cstdint>
 typedef struct{
     int32_t is_subnormal; // 是否是非规格化数
     int32_t is_nan;

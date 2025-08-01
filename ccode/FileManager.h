@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <cstdint>
 //mode 0是从头读/写，1是从上次读写位置继续读/写
 // #define FM_DEBUG
 

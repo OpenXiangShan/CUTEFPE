@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include "FloatDecode.h"
-
+#include <cstdint>
 // #define DECODEADD_DEBUG
 // #define DECODEMUL_DEBUG
 // #define FP16_DECODE_DEBUG // 已无问题，无需使用
