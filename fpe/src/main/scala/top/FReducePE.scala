@@ -67,6 +67,8 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         )
     }
 
+    val TF32Zero = RawFloat.fromUInt(0.U(19.W), 8, 11)
+
     for(i <- 0 until ReduceWidth/32){
         val Bits16 = io.in(16 * i + 15, 16 * i)
         val Bits32 = io.in(32 * i + 31, 32 * i)
@@ -85,12 +87,10 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         io.out.TF32Vec(i) := Mux(
             io.opcode === 1.U, FP16toTF32,
             Mux(io.opcode === 2.U, BF16toTF32,
-                RawFloat.fromUInt(Bits32(31, 13), 8, 11)
+                Mux(io.opcode === 3.U, RawFloat.fromUInt(Bits32(31, 13), 8, 11), TF32Zero)
             )
         )
     }
-
-    val TF32Zero = RawFloat.fromUInt(0.U(19.W), 8, 11)
 
     for(i <- ReduceWidth/32 until ReduceWidth/16){
         val Bits16 = io.in(16 * i + 15, 16 * i)
