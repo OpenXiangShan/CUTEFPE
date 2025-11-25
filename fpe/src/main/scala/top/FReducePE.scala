@@ -244,7 +244,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteBundle{
     val CMantissa = SInt(32.W)
     val Product0 = Vec(ReduceWidth/16 + 1, SInt(26.W)) //每个向量的尾数右移结果
     val MaxExp = UInt(9.W)
-    val opcode = UInt(2.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
     val SignVec = Vec(ReduceWidth/16 + 1, Bool()) //每个向量的符号位
 }
@@ -254,14 +254,14 @@ class FPipe2Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes1 = Vec(P3AddNum, SInt((17 + log2Ceil(P2AddNum)).W)) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(9.W)
-    val opcode = UInt(2.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
 class FPipe3Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes = SInt(32.W) //归约计算结果
     val MaxExp = UInt(9.W)
-    val opcode = UInt(2.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
