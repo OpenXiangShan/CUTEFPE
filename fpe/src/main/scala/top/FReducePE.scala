@@ -3,6 +3,7 @@ package cute
 
 import chisel3._
 import chisel3.util._
+import cute.ElementDataType._
 import org.chipsalliance.cde.config._
 class RawFloatException extends Bundle {
     val is_nan = Bool()
@@ -236,7 +237,7 @@ class FPipe0Result(implicit p: Parameters) extends CuteBundle{
     val MulExpVec = Vec(ReduceWidth/16 + 1, UInt(9.W))
     val CmpTreeP0Result = new CmpTreeP0Res(cmptreelayers)
     val SignVec = Vec(ReduceWidth/16 + 1, Bool()) //每个向量的符号位
-    val opcode = UInt(3.W)   //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(DataTypeBitWidth.W)   //0:Int8, 1:FP16, 2:BF16, 3:TF32
 }
 
 class FPipe1Result(implicit p: Parameters) extends CuteBundle{
@@ -244,7 +245,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteBundle{
     val CMantissa = SInt(32.W)
     val Product0 = Vec(ReduceWidth/16 + 1, SInt(26.W)) //每个向量的尾数右移结果
     val MaxExp = UInt(9.W)
-    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(DataTypeBitWidth.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
     val SignVec = Vec(ReduceWidth/16 + 1, Bool()) //每个向量的符号位
 }
@@ -254,14 +255,14 @@ class FPipe2Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes1 = Vec(P3AddNum, SInt((17 + log2Ceil(P2AddNum)).W)) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(9.W)
-    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(DataTypeBitWidth.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
 class FPipe3Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes = SInt(32.W) //归约计算结果
     val MaxExp = UInt(9.W)
-    val opcode = UInt(3.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(DataTypeBitWidth.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
@@ -271,7 +272,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
         val inA = Input(UInt(ReduceWidth.W))
         val inB = Input(UInt(ReduceWidth.W))
         val inC = Input(UInt(32.W))
-        val opcode = Input(UInt(3.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8
+        val opcode = Input(UInt(DataTypeBitWidth.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8
         val out = Output(new FPipe0Result)
     })
 
@@ -280,11 +281,11 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     val BDecoder = Module(new FVecDecoder)
 
     ADecoder.io.in := io.inA
-    ADecoder.io.opcode := Mux(io.opcode === 4.U || io.opcode === 0.U, 0.U, 
-        Mux(io.opcode === 5.U || io.opcode === 6.U, 4.U, io.opcode))
+    ADecoder.io.opcode := Mux(io.opcode === DataTypeI8U8I32 || io.opcode === DataTypeI8I8I32, 0.U, 
+        Mux(io.opcode === DataTypeU8I8I32 || io.opcode === DataTypeU8U8I32, 4.U, io.opcode))
     BDecoder.io.in := io.inB
-    BDecoder.io.opcode := Mux(io.opcode === 5.U || io.opcode === 0.U, 0.U, 
-        Mux(io.opcode === 4.U || io.opcode === 6.U, 4.U, io.opcode))
+    BDecoder.io.opcode := Mux(io.opcode === DataTypeU8I8I32 || io.opcode === DataTypeI8I8I32, 0.U, 
+        Mux(io.opcode === DataTypeI8U8I32 || io.opcode === DataTypeU8U8I32, 4.U, io.opcode))
 
     //尾数乘法计算
 
@@ -294,10 +295,14 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
         val Product0A = Wire(SInt(12.W))
         val Product0B = Wire(SInt(12.W))
 
-        Product0A := Mux(io.opcode === 0.U || io.opcode === 4.U || io.opcode === 5.U || io.opcode === 6.U, ADecoder.io.out.Int8Vec(i).asSInt.pad(12),
-                            ADecoder.io.out.TF32Vec(i).signed_sig)
-        Product0B := Mux(io.opcode === 0.U || io.opcode === 5.U || io.opcode === 4.U || io.opcode === 6.U, BDecoder.io.out.Int8Vec(i).asSInt.pad(12),
-                            BDecoder.io.out.TF32Vec(i).signed_sig)
+        Product0A := Mux(
+          io.opcode === DataTypeI8I8I32 || io.opcode === DataTypeI8U8I32 || io.opcode === DataTypeU8I8I32 || io.opcode === DataTypeU8U8I32,
+          ADecoder.io.out.Int8Vec(i).asSInt.pad(12),
+          ADecoder.io.out.TF32Vec(i).signed_sig)
+        Product0B := Mux(
+          io.opcode === DataTypeI8I8I32 || io.opcode === DataTypeU8I8I32 || io.opcode === DataTypeI8U8I32 || io.opcode === DataTypeU8U8I32,
+          BDecoder.io.out.Int8Vec(i).asSInt.pad(12),
+          BDecoder.io.out.TF32Vec(i).signed_sig)
 
         io.out.Product0(i) := Product0A * Product0B
         // printf("product0[%d]: %x\n", i.U,io.out.Product0(i))
@@ -351,8 +356,9 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     // }
 
     io.out.ExceptionVec(ReduceWidth/16) := CDecode.exception
-    io.out.CMantissa := Mux(io.opcode === 1.U || io.opcode === 2.U || io.opcode === 3.U, 
-        CDecode.signed_sig.pad(32), io.inC.asSInt)
+    io.out.CMantissa := Mux(
+      io.opcode === DataTypeF16F16F32 || io.opcode === DataTypeBF16BF16F32 || io.opcode === DataTypeTF32TF32F32, 
+      CDecode.signed_sig.pad(32), io.inC.asSInt)
     
     // printf("c mantissa: %x\n", io.out.CMantissa)
 
@@ -436,11 +442,13 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
 
     for(i <- 0 until ReduceWidth/16 + 1){
         if(i != ReduceWidth/16){
-            io.out.Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
-                io.in.Product0(i).pad(26), ProductRShift(i))
+            io.out.Product0(i) := Mux(
+              io.in.opcode === DataTypeI8I8I32 || io.in.opcode === DataTypeI8U8I32 || io.in.opcode === DataTypeU8I8I32 || io.in.opcode === DataTypeU8U8I32, 
+              io.in.Product0(i).pad(26), ProductRShift(i))
         } else {
-            io.out.Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
-                0.S(26.W), ProductRShift(i))
+            io.out.Product0(i) := Mux(
+              io.in.opcode === DataTypeI8I8I32 || io.in.opcode === DataTypeI8U8I32 || io.in.opcode === DataTypeU8I8I32 || io.in.opcode === DataTypeU8U8I32, 
+              0.S(26.W), ProductRShift(i))
         }
     }
 
@@ -481,8 +489,15 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     io.out.ReduceRes0 := SumResult0
     io.out.ReduceRes1 := SumResult1
-    io.out.CMantissa := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
-        io.in.CMantissa, Mux(io.in.SignVec(ReduceWidth/16), -io.in.Product0(ReduceWidth/16), io.in.Product0(ReduceWidth/16)).pad(32))
+    io.out.CMantissa := Mux(
+      io.in.opcode === DataTypeI8I8I32 || io.in.opcode === DataTypeI8U8I32 || io.in.opcode === DataTypeU8I8I32 || io.in.opcode === DataTypeU8U8I32, 
+      io.in.CMantissa,
+      Mux(
+        io.in.SignVec(ReduceWidth/16),
+        -io.in.Product0(ReduceWidth/16),
+        io.in.Product0(ReduceWidth/16)
+      ).pad(32)
+    )
     io.out.MaxExp := io.in.MaxExp
     io.out.opcode := io.in.opcode
     io.out.SumException := io.in.SumException
@@ -508,8 +523,9 @@ class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
     ReduceRes1 := SumResult1.reduce(_ + _).pad(32)
     ReduceResI := ReduceResF + ReduceRes1
 
-    io.out.ReduceRes := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
-        ReduceResI, ReduceResF)
+    io.out.ReduceRes := Mux(
+      io.in.opcode === DataTypeI8I8I32 || io.in.opcode === DataTypeI8U8I32 || io.in.opcode === DataTypeU8I8I32 || io.in.opcode === DataTypeU8U8I32, 
+      ReduceResI, ReduceResF)
     io.out.MaxExp := io.in.MaxExp
     io.out.opcode := io.in.opcode
     io.out.SumException := io.in.SumException
@@ -581,8 +597,9 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
 
     val Result = Wire(UInt(ResultWidth.W))
     Result := Cat(ResultSign, ResultExp, ResultSig(22, 0))
-    io.out := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
-        ReduceResI.asUInt, Mux(IsException, ExceptionBits, Result)
+    io.out := Mux(
+      io.in.opcode === DataTypeI8I8I32 || io.in.opcode === DataTypeI8U8I32 || io.in.opcode === DataTypeU8I8I32 || io.in.opcode === DataTypeU8U8I32,
+      ReduceResI.asUInt, Mux(IsException, ExceptionBits, Result)
     )
 }
 
@@ -627,7 +644,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
         val BVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
         val CAdd    = Flipped(DecoupledIO(UInt(ResultWidth.W)))
         val DResult = DecoupledIO(UInt(ResultWidth.W))
-        val opcode = Input(UInt(3.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32
+        val opcode = Input(UInt(DataTypeBitWidth.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32
     })
 
     val pipe0 = Module(new FReduceMACPipe0)
