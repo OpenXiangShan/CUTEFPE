@@ -85,12 +85,12 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         BF16toTF32.signed_sig := Cat(DecodeBF16.signed_sig, 0.U(3.W)).asSInt
         BF16toTF32.exception := DecodeBF16.exception
         BF16toTF32.sign := DecodeBF16.sign
-        io.out.TF32Vec(i) := Mux(
-            io.opcode === 1.U, FP16toTF32,
-            Mux(io.opcode === 2.U, BF16toTF32,
-                Mux(io.opcode === 3.U, RawFloat.fromUInt(Bits32(31, 13), 8, 11), TF32Zero)
-            )
-        )
+        io.out.TF32Vec(i) := TF32Zero
+        switch(io.opcode){
+          is (1.U) {io.out.TF32Vec(i) := FP16toTF32}
+          is (2.U) {io.out.TF32Vec(i) := BF16toTF32}
+          is (3.U) {io.out.TF32Vec(i) := RawFloat.fromUInt(Bits32(31, 13), 8, 11)}
+        }
     }
 
     for(i <- ReduceWidth/32 until ReduceWidth/16){
@@ -107,12 +107,11 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         BF16toTF32.signed_sig := Cat(DecodeBF16.signed_sig, 0.U(3.W)).asSInt// 有符号数，所以12位
         BF16toTF32.exception := DecodeBF16.exception
         BF16toTF32.sign := DecodeBF16.sign
-        io.out.TF32Vec(i) := Mux(
-            io.opcode === 1.U, FP16toTF32,
-            Mux(io.opcode === 2.U, BF16toTF32,
-                TF32Zero
-            )
-        )
+        io.out.TF32Vec(i) := TF32Zero
+        switch(io.opcode){
+          is (1.U) {io.out.TF32Vec(i) := FP16toTF32}
+          is (2.U) {io.out.TF32Vec(i) := BF16toTF32}
+        }
     }
 
 
@@ -656,7 +655,10 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
 
     val PipeResRegValid = RegInit(VecInit(Seq.fill(6)(false.B)))
 
-    val InputReg = Reg(UInt((ReduceWidth + ReduceWidth + ResultWidth + 3).W))
+    val InputRegA     = Reg(UInt(ReduceWidth.W))
+    val InputRegB     = Reg(UInt(ReduceWidth.W))
+    val InputRegC     = Reg(UInt(ResultWidth.W))
+    val InputRegOpcode = Reg(UInt(3.W))
     val Pipe0ResReg = Reg(new FPipe0Result)
     val Pipe1ResReg = Reg(new FPipe1Result)
     val Pipe2ResReg = Reg(new FPipe2Result)
@@ -686,21 +688,30 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
 
     when(InReady){
         when(ABCValid === 1.U){
-            InputReg := Cat(io.AVector.bits, io.BVector.bits, io.CAdd.bits, io.opcode)
+            InputRegA     := io.AVector.bits
+            InputRegB     := io.BVector.bits
+            InputRegC     := io.CAdd.bits
+            InputRegOpcode := io.opcode
             PipeResRegValid(0) := true.B
         }.otherwise{
-            InputReg := InputReg
+            InputRegA     := InputRegA
+            InputRegB     := InputRegB
+            InputRegC     := InputRegC
+            InputRegOpcode := InputRegOpcode
             PipeResRegValid(0) := false.B
         }
     }.otherwise{
-        InputReg := InputReg
+        InputRegA     := InputRegA
+        InputRegB     := InputRegB
+        InputRegC     := InputRegC
+        InputRegOpcode := InputRegOpcode
         PipeResRegValid(0) := PipeResRegValid(0)
     }
-    
-    pipe0.io.inA := InputReg(ResultWidth + ReduceWidth + ReduceWidth + 2, ResultWidth + ReduceWidth + 3)
-    pipe0.io.inB := InputReg(ResultWidth + ReduceWidth + 2, ResultWidth + 3)
-    pipe0.io.inC := InputReg(ResultWidth + 2, 3)
-    pipe0.io.opcode := InputReg(2, 0)
+
+    pipe0.io.inA     := InputRegA
+    pipe0.io.inB     := InputRegB
+    pipe0.io.inC     := InputRegC
+    pipe0.io.opcode  := InputRegOpcode
 
     when(Pipe0ResRegAllowIn){
         when(PipeResRegValid(0)){
