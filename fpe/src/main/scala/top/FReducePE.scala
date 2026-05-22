@@ -4,6 +4,25 @@ package cute
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
+
+object FReduceComputeType {
+    val ComputeTypeBitWidth = 4
+    val ComputeTypeUndef = 15.U(ComputeTypeBitWidth.W)
+    val I8I8I32 = 0.U(ComputeTypeBitWidth.W)
+    val F16F16F32 = 1.U(ComputeTypeBitWidth.W)
+    val BF16BF16F32 = 2.U(ComputeTypeBitWidth.W)
+    val TF32TF32F32 = 3.U(ComputeTypeBitWidth.W)
+    val I8U8I32 = 4.U(ComputeTypeBitWidth.W)
+    val U8I8I32 = 5.U(ComputeTypeBitWidth.W)
+    val U8U8I32 = 6.U(ComputeTypeBitWidth.W)
+    val Mxfp8e4m3F32 = 7.U(ComputeTypeBitWidth.W)
+    val Mxfp8e5m2F32 = 8.U(ComputeTypeBitWidth.W)
+    val Nvfp4F32 = 9.U(ComputeTypeBitWidth.W)
+    val Mxfp4F32 = 10.U(ComputeTypeBitWidth.W)
+    val Fp8e4m3F32 = 11.U(ComputeTypeBitWidth.W)
+    val Fp8e5m2F32 = 12.U(ComputeTypeBitWidth.W)
+}
+
 class RawFloatException extends Bundle {
     val is_nan = Bool()
     val is_inf = Bool()
@@ -131,7 +150,7 @@ class FPScaleDecoder(implicit p: Parameters) extends CuteModule {
 class FVecDecoder(implicit p: Parameters) extends CuteModule {
     val io = IO(new Bundle{
         val in = Input(UInt(ReduceWidth.W))
-        val opcode = Input(UInt(4.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:UI8， 7,11：E4M3, 8,12:e5m2
+        val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))
         val out = Output(new FDecodeResult)
     })
 
@@ -140,7 +159,7 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
     val TF32i8 = Wire(Vec(ReduceWidth/8, new RawFloat(10, 11)))
     for(i <- 0 until ReduceWidth/8){
         TF32i8(i) := RawFloat.fromUInt(0.U(21.W), 10, 11)
-        TF32i8(i).signed_sig := Mux(io.opcode === 0.U, 
+        TF32i8(i).signed_sig := Mux(io.opcode === FReduceComputeType.I8I8I32,
             io.in(8 * i + 7, 8 * i).asSInt.pad(12), io.in(8 * i + 7, 8 * i).pad(12).asSInt
         )
     }
@@ -180,11 +199,11 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         TF32conv.exception := DecodeTF32.exception
         TF32conv.sign := DecodeTF32.sign
         io.out.TF32Vec(i) := Mux(
-            io.opcode === 1.U, FP16toTF32,
-            Mux(io.opcode === 2.U, BF16toTF32,
-                Mux(io.opcode === 3.U, TF32conv, 
-                    Mux(io.opcode === 7.U || io.opcode === 11.U, E4M3toTF32,
-                        Mux(io.opcode === 8.U || io.opcode === 12.U, E5M2toTF32,
+            io.opcode === FReduceComputeType.F16F16F32, FP16toTF32,
+            Mux(io.opcode === FReduceComputeType.BF16BF16F32, BF16toTF32,
+                Mux(io.opcode === FReduceComputeType.TF32TF32F32, TF32conv,
+                    Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
+                        Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
                             TF32i8(i)
                         )
                     )
@@ -221,11 +240,11 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
         io.out.TF32Vec(i) := Mux(
-            io.opcode === 1.U, FP16toTF32,
-            Mux(io.opcode === 2.U, BF16toTF32, 
-                Mux(io.opcode === 3.U, TF32Zero, 
-                    Mux(io.opcode === 7.U || io.opcode === 11.U, E4M3toTF32,
-                        Mux(io.opcode === 8.U || io.opcode === 12.U, E5M2toTF32,
+            io.opcode === FReduceComputeType.F16F16F32, FP16toTF32,
+            Mux(io.opcode === FReduceComputeType.BF16BF16F32, BF16toTF32,
+                Mux(io.opcode === FReduceComputeType.TF32TF32F32, TF32Zero,
+                    Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
+                        Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
                             TF32i8(i)
                         )
                     )
@@ -249,8 +268,8 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
         io.out.TF32Vec(i) := Mux(
-            io.opcode === 7.U || io.opcode === 11.U, E4M3toTF32,
-            Mux(io.opcode === 8.U || io.opcode === 12.U, E5M2toTF32,
+            io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
+            Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
                 TF32i8(i)
             )
         )
@@ -349,7 +368,7 @@ class FPipe0Result(implicit p: Parameters) extends CuteBundle{
     // val CmpTreeP0Result = new CmpTreeP0Res(cmptreelayers, ReduceWidth/16 + 1, 9)
     val CmpTreefp8P0Result = new CmpTreeP0Res(fp8cmptreelayers, ReduceWidth/8 + 1, 10)
     val SignVec = Vec(ReduceWidth/8 + 1, Bool()) //每个向量的符号位
-    val opcode = UInt(4.W)   //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)
     val scaleFP = Vec(ReduceWidth/4/MinGroupSize + 1, new RawFloat(9, 11))
 }
 
@@ -362,7 +381,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteBundle{
     val MaxExp = UInt(10.W)
     val CmpTreefp4P0Result = new CmpTreeP0Res(8, ReduceWidth/4/MinGroupSize + 1, 9)
     // val FP4MaxExp = SInt(8.W)
-    val opcode = UInt(4.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)
     val SumException = UInt(4.W) //归约计算结果的异常标志位
     val SignVec = Vec(ReduceWidth/8 + 1, Bool()) //每个向量的符号位
     val scaleFP = Vec(ReduceWidth/4/MinGroupSize + 1, new RawFloat(9, 11))
@@ -373,7 +392,7 @@ class FPipe2Result(implicit p: Parameters) extends CuteBundle{
     val ReduceRes1 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(10.W)
-    val opcode = UInt(4.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)
     val SumException = UInt(4.W) //归约计算结果的异常标志位
     val FP4ABShift = Vec(ReduceWidth/4/MinGroupSize + 1, SInt((32 + 3).W))
 }
@@ -385,7 +404,7 @@ class FPipe3Result(implicit p: Parameters) extends CuteBundle{
     // val ReduceResFP4 = SInt(32.W)
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(10.W)
-    val opcode = UInt(4.W)  //0:Int8, 1:FP16, 2:BF16, 3:TF32
+    val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)
     val SumException = UInt(4.W) //归约计算结果的异常标志位
 }
 
@@ -399,7 +418,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
         val inAscale = Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         val inBscale = Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         val inC = Input(UInt(32.W))
-        val opcode = Input(UInt(4.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8, 7:MXFP8E4M3, 8:MXFP8E5M2, 9:NVFP4, 10:MXFP4, 11:E4M3, 12:E5M2
+        val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))
         val out = Output(new FPipe0Result)
     })
 
@@ -432,8 +451,8 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     }
     // mxfp4block数量为nvfp4一半
     for (i <- 0 until ReduceWidth/4/MinGroupSize){
-        FP4AScaleExceptionVec(i) := Mux(io.opcode === 10.U, mxfp4AScaleExceptionVec(i / 2), FP4AScaleDecoder.io.out(i).exception)
-        FP4BScaleExceptionVec(i) := Mux(io.opcode === 10.U, mxfp4BScaleExceptionVec(i / 2), FP4BScaleDecoder.io.out(i).exception)
+        FP4AScaleExceptionVec(i) := Mux(io.opcode === FReduceComputeType.Mxfp4F32, mxfp4AScaleExceptionVec(i / 2), FP4AScaleDecoder.io.out(i).exception)
+        FP4BScaleExceptionVec(i) := Mux(io.opcode === FReduceComputeType.Mxfp4F32, mxfp4BScaleExceptionVec(i / 2), FP4BScaleDecoder.io.out(i).exception)
     }
 
     io.out.scaleFP(ReduceWidth/4/MinGroupSize).sign := CDecode.sign
@@ -455,14 +474,14 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
             printf("FP4BScaleDecoder.io.out[%d].exp: %x\n", i.U, FP4BScaleDecoder.io.out(i).exp)
         }
         io.out.scaleFP(i).sign := Mux(
-            io.opcode === 9.U, 
+            io.opcode === FReduceComputeType.Nvfp4F32,
             FP4AScaleDecoder.io.out(i).sign ^ FP4BScaleDecoder.io.out(i).sign,
             0.B
         )
         io.out.scaleFP(i).exp := Mux(
-            io.out.ExceptionVec(i).is_zero || (io.opcode =/= 9.U && io.opcode =/= 10.U), 
+            io.out.ExceptionVec(i).is_zero || (io.opcode =/= FReduceComputeType.Nvfp4F32 && io.opcode =/= FReduceComputeType.Mxfp4F32),
              0.S, /*这里的9对应于之后对齐前的左移6，两者合起来15与FP32的尾数对齐，之所以避让出9位空位是因为FP4直接转换成整数计算中间结果位宽很大*/
-            Mux(io.opcode === 10.U, mxfp4ScaleSat(i / 2).asSInt, FP4AScaleDecoder.io.out(i).exp.pad(9) + FP4BScaleDecoder.io.out(i).exp.pad(9) + (255 + 9).S)
+            Mux(io.opcode === FReduceComputeType.Mxfp4F32, mxfp4ScaleSat(i / 2).asSInt, FP4AScaleDecoder.io.out(i).exp.pad(9) + FP4BScaleDecoder.io.out(i).exp.pad(9) + (255 + 9).S)
         )
 
         if (DEBUG_FP8 || DEBUG_FP4) {
@@ -472,9 +491,9 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
 
         val sig_mul = Wire(SInt(10.W))
         sig_mul := Mux(
-            io.opcode === 9.U, 
+            io.opcode === FReduceComputeType.Nvfp4F32,
             (FP4AScaleDecoder.io.out(i).signed_sig(4, 0).asSInt * FP4BScaleDecoder.io.out(i).signed_sig(4, 0).asSInt).asSInt,
-            Mux(io.opcode === 10.U, 1.S, 0.S)
+            Mux(io.opcode === FReduceComputeType.Mxfp4F32, 1.S, 0.S)
         )
         io.out.scaleFP(i).signed_sig := Mux(io.out.scaleFP(i).sign, 
             -sig_mul.asSInt, sig_mul.asSInt
@@ -562,8 +581,8 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
         AException := io.inA.TF32Vec(i).exception
         BException := io.inB.TF32Vec(i).exception
         if (i < ReduceWidth/4/MinGroupSize) {
-            AException := Mux(io.opcode === 9.U || io.opcode === 10.U, FP4AScaleExceptionVec(i), io.inA.TF32Vec(i).exception)
-            BException := Mux(io.opcode === 9.U || io.opcode === 10.U, FP4BScaleExceptionVec(i), io.inB.TF32Vec(i).exception)
+            AException := Mux(io.opcode === FReduceComputeType.Nvfp4F32 || io.opcode === FReduceComputeType.Mxfp4F32, FP4AScaleExceptionVec(i), io.inA.TF32Vec(i).exception)
+            BException := Mux(io.opcode === FReduceComputeType.Nvfp4F32 || io.opcode === FReduceComputeType.Mxfp4F32, FP4BScaleExceptionVec(i), io.inB.TF32Vec(i).exception)
         }
 
         io.out.ExceptionVec(i).is_nan := AException.is_nan || BException.is_nan ||
@@ -590,7 +609,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     MulExpVecSigned(ReduceWidth/8) := CDecode.exp.pad(9) //for debug
 
     io.out.ExceptionVec(ReduceWidth/8) := CDecode.exception
-    io.out.CMantissa := Mux(io.opcode === 1.U || io.opcode === 2.U || io.opcode === 3.U || io.opcode === 7.U || io.opcode === 8.U || io.opcode === 9.U || io.opcode === 10.U || io.opcode === 11.U || io.opcode === 12.U, 
+    io.out.CMantissa := Mux(io.opcode === FReduceComputeType.F16F16F32 || io.opcode === FReduceComputeType.BF16BF16F32 || io.opcode === FReduceComputeType.TF32TF32F32 || io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Nvfp4F32 || io.opcode === FReduceComputeType.Mxfp4F32 || io.opcode === FReduceComputeType.Fp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e5m2F32,
         CDecode.signed_sig.pad(32), io.inC.asSInt)
     
     if (DEBUG_FP8) 
@@ -602,7 +621,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     // cmptreep0.io.in(ReduceWidth/16) := MulExpVec(ReduceWidth/8) //最后一个C的阶码
     for (i <- 0 until ReduceWidth/16){
         cmptreefp8p0.io.in(i) := MulExpVec(i)
-        cmptreefp8p0.io.in(i + ReduceWidth/16) := Mux(io.opcode === 7.U || io.opcode === 8.U || io.opcode === 11.U || io.opcode === 12.U, MulExpVec(i + ReduceWidth/16), 0.U)
+        cmptreefp8p0.io.in(i + ReduceWidth/16) := Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, MulExpVec(i + ReduceWidth/16), 0.U)
     }
 
     cmptreefp8p0.io.in(ReduceWidth/8) := MulExpVec(ReduceWidth/8) //最后一个C的阶码
@@ -654,7 +673,7 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
     {printf("cmptreefp8p1.io.out: %x\n", cmptreefp8p1.io.out)}
 
     val productMaxExp = Wire(UInt(10.W))
-    // productMaxExp := Mux(io.in.opcode === 7.U, cmptreefp8p1.io.out.pad(9), cmptreep1.io.out)
+    // productMaxExp := Mux(io.in.opcode === FReduceComputeType.Mxfp8e4m3F32, cmptreefp8p1.io.out.pad(9), cmptreep1.io.out)
     productMaxExp := cmptreefp8p1.io.out
 
     // val RightShiftVec = Wire(Vec((ReduceWidth/8) + 1, UInt(10.W)))
@@ -709,16 +728,16 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
 
     // for(i <- 0 until ReduceWidth/16 + 1){
     //     if(i != ReduceWidth/16){
-    //         io.out.Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+    //         io.out.Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
     //             io.in.Product0(i).pad(26), ProductRShift(i))
     //     } else {
-    //         io.out.Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+    //         io.out.Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
     //             0.S(26.W), ProductRShift(ReduceWidth/8))
     //     }
     // }
 
     // for (i <- 0 until ReduceWidth/16){
-    //     io.out.Product1(i) := Mux(io.in.opcode === 7.U, ProductRShift(ReduceWidth/16 + i), io.in.Product1(i))
+    //     io.out.Product1(i) := Mux(io.in.opcode === FReduceComputeType.Mxfp8e4m3F32, ProductRShift(ReduceWidth/16 + i), io.in.Product1(i))
     // }
 
     // FP4Reduce sum
@@ -777,16 +796,16 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     for(i <- 0 until ReduceWidth/16 + 1){
         if(i != ReduceWidth/16){
-            Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+            Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
                 io.in.Product0(i).pad(26), ProductRShift(i))
         } else {
-            Product0(i) := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+            Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
                 0.S(26.W), ProductRShift(ReduceWidth/8))
         }
     }
 
     for (i <- 0 until ReduceWidth/16){
-        Product1(i) := Mux(io.in.opcode === 7.U || io.in.opcode === 8.U || io.in.opcode === 11.U || io.in.opcode === 12.U, ProductRShift(ReduceWidth/16 + i), io.in.Product1(i))
+        Product1(i) := Mux(io.in.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.in.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.in.opcode === FReduceComputeType.Fp8e4m3F32 || io.in.opcode === FReduceComputeType.Fp8e5m2F32, ProductRShift(ReduceWidth/16 + i), io.in.Product1(i))
     }
 
     // Phase1 of fp4 max
@@ -805,7 +824,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     for (i <- 0 until ReduceWidth/4/MinGroupSize){
         val tempFP4 = Wire(SInt((32 + 3).W)) // 32位，   向左保留3位，减少负数右移遗留-1累积的影响
-        tempFP4 := (io.in.FP4ReduceRes(i) * io.in.scaleFP(i).signed_sig).pad(32 + 3) << Mux(io.in.opcode === 10.U, (15 + 3).U, (6 + 3).U)
+        tempFP4 := (io.in.FP4ReduceRes(i) * io.in.scaleFP(i).signed_sig).pad(32 + 3) << Mux(io.in.opcode === FReduceComputeType.Mxfp4F32, (15 + 3).U, (6 + 3).U)
         io.out.FP4ABShift(i) := tempFP4 >> FP4Shift(i)
         if (DEBUG_FP4) {
             printf("FP4Shift[%d]: %x\n", i.U, FP4Shift(i))
@@ -847,9 +866,9 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     io.out.ReduceRes0 := SumResult0
     io.out.ReduceRes1 := SumResult1
-    io.out.CMantissa := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+    io.out.CMantissa := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
         io.in.CMantissa, Mux(io.in.SignVec(ReduceWidth/8), -Product0(ReduceWidth/16), Product0(ReduceWidth/16)).pad(32))
-    io.out.MaxExp := Mux(io.in.opcode === 9.U || io.in.opcode === 10.U, FP4MaxExp.asUInt.pad(10) + 256.U, io.in.MaxExp)
+    io.out.MaxExp := Mux(io.in.opcode === FReduceComputeType.Nvfp4F32 || io.in.opcode === FReduceComputeType.Mxfp4F32, FP4MaxExp.asUInt.pad(10) + 256.U, io.in.MaxExp)
     if (DEBUG_FP4) {
         printf("FP4MaxExp: %x\n", FP4MaxExp)
         printf("io.out.MaxExp: %x\n", io.out.MaxExp)
@@ -870,12 +889,12 @@ class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
     val SumResult0 = Wire(Vec(P3AddNum, SInt((32 + 3).W)))
     val SumResult1 = Wire(Vec(P3AddNum, SInt((32).W)))
     for(i <- 0 until P3AddNum) {
-        SumResult0(i) := Mux(io.in.opcode === 9.U || io.in.opcode === 10.U, io.in.FP4ABShift(i), Cat(io.in.ReduceRes0(i).pad(32), 0.U(3.W)).asSInt)
+        SumResult0(i) := Mux(io.in.opcode === FReduceComputeType.Nvfp4F32 || io.in.opcode === FReduceComputeType.Mxfp4F32, io.in.FP4ABShift(i), Cat(io.in.ReduceRes0(i).pad(32), 0.U(3.W)).asSInt)
         SumResult1(i) := io.in.ReduceRes1(i).pad(32)
     }
 
     
-    io.out.ReduceRes0 := (SumResult0.reduce(_ + _) + Mux(io.in.opcode === 9.U || io.in.opcode === 10.U, io.in.FP4ABShift(ReduceWidth / 4 / MinGroupSize), Cat(io.in.CMantissa, 0.U(3.W)).asSInt))(34, 3).asSInt
+    io.out.ReduceRes0 := (SumResult0.reduce(_ + _) + Mux(io.in.opcode === FReduceComputeType.Nvfp4F32 || io.in.opcode === FReduceComputeType.Mxfp4F32, io.in.FP4ABShift(ReduceWidth / 4 / MinGroupSize), Cat(io.in.CMantissa, 0.U(3.W)).asSInt))(34, 3).asSInt
     
     io.out.ReduceRes1 := SumResult1.reduce(_ + _)
 
@@ -883,7 +902,7 @@ class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
     {printf("CMantissa: %x\n", io.in.CMantissa)}
 
 
-    // io.out.ReduceRes := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U || io.in.opcode === 7.U, 
+    // io.out.ReduceRes := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32 || io.in.opcode === FReduceComputeType.Mxfp8e4m3F32,
     //     ReduceResI, ReduceResF)
     // printf("ReduceResI: %x\n", ReduceResI)
     io.out.CMantissa := io.in.CMantissa
@@ -909,7 +928,7 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
     SumResult1 := io.in.ReduceRes1.pad(32)
 
 
-    ReduceRes := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U || io.in.opcode === 7.U || io.in.opcode === 8.U || io.in.opcode === 11.U || io.in.opcode === 12.U, 
+    ReduceRes := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32 || io.in.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.in.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.in.opcode === FReduceComputeType.Fp8e4m3F32 || io.in.opcode === FReduceComputeType.Fp8e5m2F32,
         SumResult0 + SumResult1.pad(32), SumResult0)
 
     if (DEBUG_FP8 || DEBUG_FP4)
@@ -988,7 +1007,7 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
         printf("Result:%x\n", Result)
     }
     Result := Cat(ResultSign, ResultExp, ResultSig(22, 0))
-    io.out := Mux(io.in.opcode === 0.U || io.in.opcode === 4.U || io.in.opcode === 5.U || io.in.opcode === 6.U, 
+    io.out := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
         ReduceResI.asUInt, Mux(IsException, ExceptionBits, Result)
     )
 }
@@ -1036,7 +1055,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
         val AScale  = Flipped(DecoupledIO(UInt((ReduceWidth/MinDataTypeWidth/MinGroupSize * ScaleElementWidth).W)))
         val BScale  = Flipped(DecoupledIO(UInt((ReduceWidth/MinDataTypeWidth/MinGroupSize * ScaleElementWidth).W)))
         val DResult = DecoupledIO(UInt(ResultWidth.W))
-        val opcode = Input(UInt(4.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8, 7:MXFP8E4M3, 8:MXFP8e5m2 9:NVFP4, 10:MXFP4, 11:FP8E4M3, 12:FP8E5M2
+        val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8, 7:MXFP8E4M3, 8:MXFP8e5m2 9:NVFP4, 10:MXFP4, 11:FP8E4M3, 12:FP8E5M2
     })
 
     // for DEBUG
@@ -1063,7 +1082,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
 
     val PipeResRegValid = RegInit(VecInit(Seq.fill(6)(false.B)))
 
-    val InputRegC = Reg(UInt((ResultWidth + 4).W))
+    val InputRegC = Reg(UInt((ResultWidth + FReduceComputeType.ComputeTypeBitWidth).W))
     val InputRegA = Reg(new FDecodeResult)
     val InputRegB = Reg(new FDecodeResult)
     val InputRegAFP4Vec = Reg(Vec(ReduceWidth/4, SInt(5.W)))
@@ -1097,17 +1116,31 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
     io.CAdd.ready := InReady
 
     val ABCValid = Wire(UInt(1.W))
-    ABCValid := io.AVector.valid && io.BVector.valid && io.CAdd.valid && ((io.opcode =/= 7.U && io.opcode =/= 8.U && io.opcode =/= 9.U && io.opcode =/= 10.U) || (io.AScale.valid && io.BScale.valid))
+    ABCValid := io.AVector.valid && io.BVector.valid && io.CAdd.valid && ((io.opcode =/= FReduceComputeType.Mxfp8e4m3F32 && io.opcode =/= FReduceComputeType.Mxfp8e5m2F32 && io.opcode =/= FReduceComputeType.Nvfp4F32 && io.opcode =/= FReduceComputeType.Mxfp4F32) || (io.AScale.valid && io.BScale.valid))
 
     val ADecoder = Module(new FVecDecoder)
     val BDecoder = Module(new FVecDecoder)
 
     ADecoder.io.in := io.AVector.bits
-    ADecoder.io.opcode := Mux(io.opcode === 4.U || io.opcode === 0.U, 0.U, 
-        Mux(io.opcode === 5.U || io.opcode === 6.U, 4.U, io.opcode))
+    ADecoder.io.opcode := Mux(
+        io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.I8I8I32,
+        FReduceComputeType.I8I8I32,
+        Mux(
+            io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.U8U8I32,
+            FReduceComputeType.I8U8I32,
+            io.opcode
+        )
+    )
     BDecoder.io.in := io.BVector.bits
-    BDecoder.io.opcode := Mux(io.opcode === 5.U || io.opcode === 0.U, 0.U, 
-        Mux(io.opcode === 4.U || io.opcode === 6.U, 4.U, io.opcode))
+    BDecoder.io.opcode := Mux(
+        io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.I8I8I32,
+        FReduceComputeType.I8I8I32,
+        Mux(
+            io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.U8U8I32,
+            FReduceComputeType.I8U8I32,
+            io.opcode
+        )
+    )
 
     // 在MXFP8时提前将scale相加加到A向量的exp上
     val scaleSum = Wire(Vec(ReduceWidth/8/32, UInt(9.W)))
@@ -1124,7 +1157,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
             for (i <- 0 until ReduceWidth/8/32){
                 // printf("scaleSum[%d]: %x\n", i.U, scaleSum(i).asSInt.pad(10))
                 for (j <- 0 until 32){
-                    InputRegA.TF32Vec(i * 32 + j).exp := Mux(io.opcode === 7.U || io.opcode === 8.U, scaleSum(i).asSInt.pad(10) + ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(10), ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(10))
+                    InputRegA.TF32Vec(i * 32 + j).exp := Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Mxfp8e5m2F32, scaleSum(i).asSInt.pad(10) + ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(10), ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(10))
                 }
             }
             InputRegAscale := io.AScale.bits.asTypeOf(InputRegAscale)
@@ -1145,7 +1178,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
         val fp4DecodeB = Module(new FP4toint)
         fp4DecodeA.io.in := io.AVector.bits((i+1)*4-1, i*4)
         fp4DecodeB.io.in := io.BVector.bits((i+1)*4-1, i*4)
-        when(InReady && ABCValid === 1.U && (io.opcode === 9.U || io.opcode === 10.U)){
+        when(InReady && ABCValid === 1.U && (io.opcode === FReduceComputeType.Nvfp4F32 || io.opcode === FReduceComputeType.Mxfp4F32)){
             InputRegAFP4Vec(i) := fp4DecodeA.io.out
             InputRegBFP4Vec(i) := fp4DecodeB.io.out
         }
@@ -1155,10 +1188,10 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
     pipe0.io.inB := InputRegB
     pipe0.io.inAFP4Vec := InputRegAFP4Vec
     pipe0.io.inBFP4Vec := InputRegBFP4Vec
-    pipe0.io.inC := InputRegC(ResultWidth + 3, 4)
+    pipe0.io.inC := InputRegC(ResultWidth + FReduceComputeType.ComputeTypeBitWidth - 1, FReduceComputeType.ComputeTypeBitWidth)
     pipe0.io.inAscale := InputRegAscale
     pipe0.io.inBscale := InputRegBscale
-    pipe0.io.opcode := InputRegC(3, 0)
+    pipe0.io.opcode := InputRegC(FReduceComputeType.ComputeTypeBitWidth - 1, 0)
 
     when(Pipe0ResRegAllowIn){
         when(PipeResRegValid(0)){
@@ -1378,4 +1411,3 @@ class top (implicit p: Parameters) extends FReducePE {}
 //     // io.ResultD.valid := ResultFIFOValid
 
 // }
-
