@@ -167,6 +167,14 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         )
     }
 
+    val isF16 = io.opcode === FReduceComputeType.F16F16F32
+    val isBF16 = io.opcode === FReduceComputeType.BF16BF16F32
+    val isTF32 = io.opcode === FReduceComputeType.TF32TF32F32
+    val isE4M3 = io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32
+    val isE5M2 = io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32
+    val isDefaultTF32Vec = !(isF16 || isBF16 || isTF32 || isE4M3 || isE5M2)
+    val isDefaultTF32VecHigh = !(isE4M3 || isE5M2)
+
     for(i <- 0 until ReduceWidth/32){
         val Bits8  = io.in(8 * i + 7, 8 * i)
         val Bits16 = io.in(16 * i + 15, 16 * i)
@@ -201,18 +209,14 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         TF32conv.signed_sig := DecodeTF32.signed_sig
         TF32conv.exception := DecodeTF32.exception
         TF32conv.sign := DecodeTF32.sign
-        io.out.TF32Vec(i) := Mux(
-            io.opcode === FReduceComputeType.F16F16F32, FP16toTF32,
-            Mux(io.opcode === FReduceComputeType.BF16BF16F32, BF16toTF32,
-                Mux(io.opcode === FReduceComputeType.TF32TF32F32, TF32conv,
-                    Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
-                        Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
-                            TF32i8(i)
-                        )
-                    )
-                )
-            )
-        )
+        io.out.TF32Vec(i) := Mux1H(Seq(
+            isF16 -> FP16toTF32,
+            isBF16 -> BF16toTF32,
+            isTF32 -> TF32conv,
+            isE4M3 -> E4M3toTF32,
+            isE5M2 -> E5M2toTF32,
+            isDefaultTF32Vec -> TF32i8(i)
+        ))
     }
 
     for(i <- ReduceWidth/32 until ReduceWidth/16){
@@ -242,18 +246,14 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         E5M2toTF32.signed_sig := Cat(DecodeE5M2.signed_sig, 0.U(8.W)).asSInt
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
-        io.out.TF32Vec(i) := Mux(
-            io.opcode === FReduceComputeType.F16F16F32, FP16toTF32,
-            Mux(io.opcode === FReduceComputeType.BF16BF16F32, BF16toTF32,
-                Mux(io.opcode === FReduceComputeType.TF32TF32F32, TF32Zero,
-                    Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
-                        Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
-                            TF32i8(i)
-                        )
-                    )
-                )
-            )
-        )
+        io.out.TF32Vec(i) := Mux1H(Seq(
+            isF16 -> FP16toTF32,
+            isBF16 -> BF16toTF32,
+            isTF32 -> TF32Zero,
+            isE4M3 -> E4M3toTF32,
+            isE5M2 -> E5M2toTF32,
+            isDefaultTF32Vec -> TF32i8(i)
+        ))
     }
 
     for(i <- ReduceWidth/16 until ReduceWidth/8){
@@ -270,12 +270,11 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
         E5M2toTF32.signed_sig := Cat(DecodeE5M2.signed_sig, 0.U(8.W)).asSInt
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
-        io.out.TF32Vec(i) := Mux(
-            io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32, E4M3toTF32,
-            Mux(io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32, E5M2toTF32,
-                TF32i8(i)
-            )
-        )
+        io.out.TF32Vec(i) := Mux1H(Seq(
+            isE4M3 -> E4M3toTF32,
+            isE5M2 -> E5M2toTF32,
+            isDefaultTF32VecHigh -> TF32i8(i)
+        ))
     }
 }
 
