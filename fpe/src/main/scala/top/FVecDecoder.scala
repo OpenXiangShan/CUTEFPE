@@ -4,12 +4,12 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
 
-class FDecodeResult(implicit p: Parameters) extends CuteBundle{
+class FDecodeResult(implicit p: Parameters) extends CuteFpeBundle{
     // val Int8Vec = Vec(ReduceWidth/8, UInt(9.W))
     val TF32Vec = Vec(ReduceWidth/8, new RawFloat(10, 11))
 }
 
-class FPScaleDecoder(implicit p: Parameters) extends CuteModule {
+class FPScaleDecoder(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         val out = Output(Vec(ReduceWidth/4/MinGroupSize, new RawFloat(8, 11)))
@@ -27,7 +27,7 @@ class FPScaleDecoder(implicit p: Parameters) extends CuteModule {
     }
 }
 
-class FVecDecoder(implicit p: Parameters) extends CuteModule {
+class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(UInt(ReduceWidth.W))
         val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))

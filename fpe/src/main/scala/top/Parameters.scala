@@ -9,7 +9,9 @@ import chisel3.util._
 import org.chipsalliance.cde.config._
 
 
-trait CUTEImplParameters{
+trait DefaultCuteFpeParameters extends CuteFpeParameters {
+  def cuteFpeConfig: CuteFpeConfig = CuteFpeConfig()
+
   def ReduceWidth :Int = 512
   def ResultWidth :Int = 32
   def MinGroupSize :Int = 16
@@ -32,5 +34,5 @@ trait CUTEImplParameters{
 
 class Parameters{}
 
-class CuteModule(implicit val p: Parameters) extends Module with CUTEImplParameters
-class CuteBundle(implicit val p: Parameters) extends Bundle with CUTEImplParameters
+class CuteFpeModule(implicit val p: Parameters) extends Module with DefaultCuteFpeParameters
+class CuteFpeBundle(implicit val p: Parameters) extends Bundle with DefaultCuteFpeParameters
