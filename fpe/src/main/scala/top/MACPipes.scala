@@ -7,20 +7,20 @@ import org.chipsalliance.cde.config._
 // Stage 0:
 // - Compute the product of the mantissas and the sum of the exponents
 // - Find the maximum exponent and calculate the right shift amount
-class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
+class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val inA = Input(new FDecodeResult)
         val inB = Input(new FDecodeResult)
-        val inAFP4Vec = Option.when(cuteMatrixExtension.enableFp4withsf)(
+        val inAFP4Vec = Option.when(cuteFpeConfig.enableFp4withsf)(
             Input(Vec(ReduceWidth/4, SInt(5.W)))
         )
-        val inBFP4Vec = Option.when(cuteMatrixExtension.enableFp4withsf)(
+        val inBFP4Vec = Option.when(cuteFpeConfig.enableFp4withsf)(
             Input(Vec(ReduceWidth/4, SInt(5.W)))
         )
-        val inAscale = Option.when(cuteMatrixExtension.enableScalingFactor)(
+        val inAscale = Option.when(cuteFpeConfig.enableScalingFactor)(
             Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         )
-        val inBscale = Option.when(cuteMatrixExtension.enableScalingFactor)(
+        val inBscale = Option.when(cuteFpeConfig.enableScalingFactor)(
             Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         )
         val inC = Input(UInt(32.W))
@@ -117,18 +117,18 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
     io.out.CmpTreefp8P0Result := cmptreefp8p0.io.out
 
     // FP4 path
-    val FP4AScaleDecoder = Option.when(cuteMatrixExtension.enableFp4withsf)(Module(new FPScaleDecoder()))
-    val FP4BScaleDecoder = Option.when(cuteMatrixExtension.enableFp4withsf)(Module(new FPScaleDecoder()))
-    val mxfp4ScaleSum = Option.when(cuteMatrixExtension.enableFp4withsf)(
+    val FP4AScaleDecoder = Option.when(cuteFpeConfig.enableFp4withsf)(Module(new FPScaleDecoder()))
+    val FP4BScaleDecoder = Option.when(cuteFpeConfig.enableFp4withsf)(Module(new FPScaleDecoder()))
+    val mxfp4ScaleSum = Option.when(cuteFpeConfig.enableFp4withsf)(
         Wire(Vec(ReduceWidth/4/32, UInt(10.W)))
     )
-    val mxfp4ScaleSat = Option.when(cuteMatrixExtension.enableFp4withsf)(
+    val mxfp4ScaleSat = Option.when(cuteFpeConfig.enableFp4withsf)(
         Wire(Vec(ReduceWidth/4/32, UInt(9.W)))
     )
-    val FP4AScaleExceptionVec = Option.when(cuteMatrixExtension.enableFp4withsf)(Wire(Vec(ReduceWidth/4/MinGroupSize, new RawFloatException)))
-    val FP4BScaleExceptionVec = Option.when(cuteMatrixExtension.enableFp4withsf)(Wire(Vec(ReduceWidth/4/MinGroupSize, new RawFloatException)))
+    val FP4AScaleExceptionVec = Option.when(cuteFpeConfig.enableFp4withsf)(Wire(Vec(ReduceWidth/4/MinGroupSize, new RawFloatException)))
+    val FP4BScaleExceptionVec = Option.when(cuteFpeConfig.enableFp4withsf)(Wire(Vec(ReduceWidth/4/MinGroupSize, new RawFloatException)))
 
-    if (cuteMatrixExtension.enableFp4withsf) {
+    if (cuteFpeConfig.enableFp4withsf) {
         // 1. FP4 scale product
         FP4AScaleDecoder.zip(io.inAscale).foreach{
             case (decoder, scale) =>
@@ -148,11 +148,11 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
 
         // 2. Generate exception flags for FP4 scale
         // Case Mxfp4
-        val mxfp4AScaleExceptionVec = Option.when(cuteMatrixExtension.enableMxfp4Fp32)(Wire(Vec(ReduceWidth/4/32, new RawFloatException)))
-        val mxfp4BScaleExceptionVec = Option.when(cuteMatrixExtension.enableMxfp4Fp32)(Wire(Vec(ReduceWidth/4/32, new RawFloatException)))
+        val mxfp4AScaleExceptionVec = Option.when(cuteFpeConfig.enableMxfp4Fp32)(Wire(Vec(ReduceWidth/4/32, new RawFloatException)))
+        val mxfp4BScaleExceptionVec = Option.when(cuteFpeConfig.enableMxfp4Fp32)(Wire(Vec(ReduceWidth/4/32, new RawFloatException)))
         mxfp4AScaleExceptionVec.foreach(_ := 0.U.asTypeOf(Vec(ReduceWidth/4/32, new RawFloatException)))
         mxfp4BScaleExceptionVec.foreach(_ := 0.U.asTypeOf(Vec(ReduceWidth/4/32, new RawFloatException)))
-        if (cuteMatrixExtension.enableMxfp4Fp32) {
+        if (cuteFpeConfig.enableMxfp4Fp32) {
             // The format of scaling factor in mxfp4 is UE8M0
             // - 255 represents nan
             for (i <- 0 until ReduceWidth/4/32){
@@ -222,7 +222,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
             io.out.scaleFP.get(i).signed_sig := Mux(io.out.scaleFP.get(i).sign, 
                 -sig_mul.asSInt, sig_mul.asSInt
             ) 
-            if (DEBUG_FP4 && cuteMatrixExtension.enableFp4withsf) {
+            if (DEBUG_FP4 && cuteFpeConfig.enableFp4withsf) {
                 printf("io.out.scaleFP[%d].sign: %x\n", i.U, io.out.scaleFP.get(i).sign)
                 printf("sig_mul[%d]: %x\n", i.U, sig_mul)
                 printf("io.out.scaleFP[%d].signed_sig: %x\n", i.U, io.out.scaleFP.get(i).signed_sig)
@@ -289,7 +289,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteModule {
 }
 
 // Pipe1的功能是将Pipe0的乘积向量尾数右移，得到尾数向量用于归约计算
-class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
+class FReduceMACPipe1(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe0Result)
         val out = Output(new FPipe1Result)
@@ -333,12 +333,12 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
     io.out.SumException := Cat(HasNaN, HasPInf, HasNInf, OnlyNZero)
 
     // FP4 Path
-    if (cuteMatrixExtension.enableFp4withsf) {
+    if (cuteFpeConfig.enableFp4withsf) {
         val cmptreefp4p0 = Module(new CmpTreeP0(8, ReduceWidth/4/MinGroupSize + 1, 9))
         val ExpVec = Wire(Vec(ReduceWidth/4/MinGroupSize + 1, SInt(9.W)))
         for (i <- 0 until ReduceWidth/4/MinGroupSize + 1){
             ExpVec(i) := io.in.scaleFP.get(i).exp
-            if (DEBUG_FP4 && cuteMatrixExtension.enableFp4withsf) {
+            if (DEBUG_FP4 && cuteFpeConfig.enableFp4withsf) {
                 printf("scaleFP[%d].exp: %x\n", i.U, io.in.scaleFP.get(i).exp)
             }
         }
@@ -364,7 +364,7 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteModule {
     io.out.SignVec := io.in.SignVec
 }
 
-class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
+class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe1Result)
         val out = Output(new FPipe2Result)
@@ -434,8 +434,8 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
     }
 
     // FP4 path
-    val FP4MaxExp = Option.when(cuteMatrixExtension.enableFp4withsf)(Wire(UInt(9.W)))
-    if (cuteMatrixExtension.enableFp4withsf) {
+    val FP4MaxExp = Option.when(cuteFpeConfig.enableFp4withsf)(Wire(UInt(9.W)))
+    if (cuteFpeConfig.enableFp4withsf) {
         // 1. Get max exp for FP4 path
         val cmptreefp4p1 = Module(new CmpTreeP1(8, ReduceWidth/4/MinGroupSize + 1, 9))
         cmptreefp4p1.io.in := io.in.CmpTreefp4P0Result.get
@@ -458,14 +458,14 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
                     io.in.opcode === FReduceComputeType.Mxfp4F32, (15 + 3).U, (6 + 3).U
                 )
             io.out.FP4ABShift.get(i) := tempFP4 >> FP4Shift(i)
-            if (DEBUG_FP4 && cuteMatrixExtension.enableFp4withsf) {
+            if (DEBUG_FP4 && cuteFpeConfig.enableFp4withsf) {
                 printf("FP4Shift[%d]: %x\n", i.U, FP4Shift(i))
                 printf("tempFP4[%d]: %x\n", i.U, tempFP4)
                 printf("io.out.FP4ABShift[%d]: %x\n", i.U, io.out.FP4ABShift.get(i))
                 printf("without pad io.out.FP4ABShift[%d]: %x\n", i.U, io.out.FP4ABShift.get(i)(34, 3))
             }
         }
-        if (DEBUG_FP4 && cuteMatrixExtension.enableFp4withsf) {
+        if (DEBUG_FP4 && cuteFpeConfig.enableFp4withsf) {
             printf("FP4Shift[8]: %x\n", FP4Shift(ReduceWidth/4/MinGroupSize))
             printf("io.out.FP4ABShift[8]: %x\n", io.out.FP4ABShift.get(ReduceWidth/4/MinGroupSize))
         }
@@ -500,7 +500,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 }
 
 // Stage 3: Final reduction
-class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
+class FReduceMACPipe3(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe2Result)
         val out = Output(new FPipe3Result)
@@ -539,7 +539,7 @@ class FReduceMACPipe3(implicit p: Parameters) extends CuteModule {
 }
 
 // Stage 4: Result selection, exception handling, normalization
-class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
+class FReduceMACPipe4(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe3Result)
         val out = UInt(ResultWidth.W)

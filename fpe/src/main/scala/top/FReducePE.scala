@@ -4,15 +4,15 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
 
-class FReducePE(implicit p: Parameters) extends CuteModule {
+class FReducePE(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val AVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
         val BVector = Flipped(DecoupledIO(UInt(ReduceWidth.W)))
         val CAdd    = Flipped(DecoupledIO(UInt(ResultWidth.W)))
-        val AScale  = Option.when(cuteMatrixExtension.enableScalingFactor)(
+        val AScale  = Option.when(cuteFpeConfig.enableScalingFactor)(
           Flipped(DecoupledIO(UInt((ReduceWidth/MinDataTypeWidth/MinGroupSize * ScaleElementWidth).W)))
         )
-        val BScale  = Option.when(cuteMatrixExtension.enableScalingFactor)(
+        val BScale  = Option.when(cuteFpeConfig.enableScalingFactor)(
           Flipped(DecoupledIO(UInt((ReduceWidth/MinDataTypeWidth/MinGroupSize * ScaleElementWidth).W)))
         )
         val DResult = DecoupledIO(UInt(ResultWidth.W))
@@ -36,7 +36,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
 
         printf("io.AVector.bits: %x\n", io.AVector.bits)
         printf("io.BVector.bits: %x\n", io.BVector.bits)
-        if (cuteMatrixExtension.enableScalingFactor) {
+        if (cuteFpeConfig.enableScalingFactor) {
             printf("op.AScale.bits[0]: %x\n", io.AScale.get.bits(7, 0))
             printf("op.BScale.bits[0]: %x\n", io.BScale.get.bits(7, 0))
             printf("AScale: %x\n", io.AScale.get.bits)
@@ -49,16 +49,16 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
     val InputRegC = Reg(UInt((ResultWidth + FReduceComputeType.ComputeTypeBitWidth).W))
     val InputRegA = Reg(new FDecodeResult)
     val InputRegB = Reg(new FDecodeResult)
-    val InputRegAFP4Vec = Option.when(cuteMatrixExtension.enableFp4withsf)(
+    val InputRegAFP4Vec = Option.when(cuteFpeConfig.enableFp4withsf)(
       Reg(Vec(ReduceWidth/4, SInt(5.W)))
     )
-    val InputRegBFP4Vec = Option.when(cuteMatrixExtension.enableFp4withsf)(
+    val InputRegBFP4Vec = Option.when(cuteFpeConfig.enableFp4withsf)(
       Reg(Vec(ReduceWidth/4, SInt(5.W)))
     )
-    val InputRegAscale = Option.when(cuteMatrixExtension.enableScalingFactor)(
+    val InputRegAscale = Option.when(cuteFpeConfig.enableScalingFactor)(
       Reg(Vec(ReduceWidth/MinDataTypeWidth/MinGroupSize, UInt(ScaleElementWidth.W)))
     )
-    val InputRegBscale = Option.when(cuteMatrixExtension.enableScalingFactor)(
+    val InputRegBscale = Option.when(cuteFpeConfig.enableScalingFactor)(
       Reg(Vec(ReduceWidth/MinDataTypeWidth/MinGroupSize, UInt(ScaleElementWidth.W)))
     )
     val Pipe0ResReg = Reg(new FPipe0Result)
@@ -125,7 +125,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
 
     // For MXFP8, directly add UE8M0 scaling factor to exponent.
     val scaleSum = io.AScale.zip(io.BScale).flatMap { case (aScale, bScale) =>
-      Option.when(cuteMatrixExtension.enableMxfp8Fp32) {
+      Option.when(cuteFpeConfig.enableMxfp8Fp32) {
         val sum = Wire(Vec(ReduceWidth/8/32, UInt(9.W)))
         for (i <- 0 until ReduceWidth/8/32) {
             sum(i) := aScale.bits(i * 8 + 7, i * 8).asUInt.pad(10) + bScale.bits(i * 8 + 7, i * 8).asUInt.pad(10) - 254.U
@@ -172,7 +172,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
     }
 
     // Stage -1 (Path B): From fp4 to fixed point
-    if (cuteMatrixExtension.enableFp4withsf) {
+    if (cuteFpeConfig.enableFp4withsf) {
         // FP4 to int
         for (i <- 0 until ReduceWidth/4){
             val fp4DecodeA = Module(new FP4toint)

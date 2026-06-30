@@ -87,7 +87,7 @@ class RawFloatException extends Bundle {
 }
 
 // Transform FP4 to fixed point for accumulation
-class FP4toint(implicit p: Parameters) extends CuteModule {
+class FP4toint(implicit p: Parameters) extends CuteFpeModule {
     // Output format is xxxx.x
     // For example, 00001 represents 0.5
     val io = IO(new Bundle{
@@ -113,7 +113,7 @@ class FP4toint(implicit p: Parameters) extends CuteModule {
     io.out := Mux(sign, -unsignedSig.asSInt, unsignedSig.asSInt)
 }
 
-class CLZ(len: Int)(implicit p: Parameters) extends CuteModule {
+class CLZ(len: Int)(implicit p: Parameters) extends CuteFpeModule {
 
   val inWidth = len
   val outWidth = (inWidth - 1).U.getWidth

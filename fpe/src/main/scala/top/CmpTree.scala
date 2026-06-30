@@ -4,13 +4,13 @@ import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
 
-class CmpTreeP0Res(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteBundle{
+class CmpTreeP0Res(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeBundle{
     val part1   = UInt((elemNum).W)   //第6层mask（也就是mask(5)）,用于算后续的mask
     val part2   = Vec(expWidth - layers, UInt((elemNum).W)) //6层以后的数据传到下一层
     val part3   = UInt(layers.W) //前6层的结果
 }
 
-class CmpTreeP0(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteModule {
+class CmpTreeP0(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle {
         val in    = Input(Vec(elemNum, UInt(expWidth.W)))
         val out   = Output(new CmpTreeP0Res(layers, elemNum, expWidth))
@@ -51,7 +51,7 @@ class CmpTreeP0(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) e
     io.out.part3 := Cat((0 until layers).map(k => res(k)))
 }
 
-class CmpTreeP1(layers : Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteModule {
+class CmpTreeP1(layers : Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle {
         val in    = Input(new CmpTreeP0Res(layers, elemNum, expWidth))
         val out   = Output(UInt(expWidth.W))
