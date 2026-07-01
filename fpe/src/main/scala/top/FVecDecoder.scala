@@ -44,9 +44,9 @@ class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
         )
     }
 
-    val isF16 = io.opcode === FReduceComputeType.F16F16F32
+    val isF16 = cuteFpeConfig.enableFp16Fp32.B && io.opcode === FReduceComputeType.F16F16F32
     val isBF16 = io.opcode === FReduceComputeType.BF16BF16F32
-    val isTF32 = io.opcode === FReduceComputeType.TF32TF32F32
+    val isTF32 = cuteFpeConfig.enableTf32Fp32.B && io.opcode === FReduceComputeType.TF32TF32F32
     val isE4M3 = io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e4m3F32
     val isE5M2 = io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32
     val isDefaultTF32Vec = !(isF16 || isBF16 || isTF32 || isE4M3 || isE5M2)
@@ -56,20 +56,12 @@ class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
         val Bits8  = io.in(8 * i + 7, 8 * i)
         val Bits16 = io.in(16 * i + 15, 16 * i)
         val Bits32 = io.in(32 * i + 31, 32 * i)
-        val DecodeFP16 = RawFloat.fromUInt(Bits16, 5, 11)
         val DecodeBF16 = RawFloat.fromUInt(Bits16, 8, 8)
         val DecodeE4M3 = RawFloat.frome4m3(Bits8)
         val DecodeE5M2 = RawFloat.fromUInt(Bits8, 5, 3)
-        val DecodeTF32 = RawFloat.fromUInt(Bits32(31, 13), 8, 11)
-        val FP16toTF32 = Wire(new RawFloat(10, 11))
         val BF16toTF32 = Wire(new RawFloat(10, 11))
         val E4M3toTF32 = Wire(new RawFloat(10, 11))
         val E5M2toTF32 = Wire(new RawFloat(10, 11))
-        val TF32conv = Wire(new RawFloat(10, 11))
-        FP16toTF32.exp := DecodeFP16.exp.pad(10)
-        FP16toTF32.signed_sig := DecodeFP16.signed_sig
-        FP16toTF32.exception := DecodeFP16.exception
-        FP16toTF32.sign := DecodeFP16.sign
         BF16toTF32.exp := DecodeBF16.exp
         BF16toTF32.signed_sig := Cat(DecodeBF16.signed_sig, 0.U(3.W)).asSInt
         BF16toTF32.exception := DecodeBF16.exception
@@ -82,35 +74,42 @@ class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
         E5M2toTF32.signed_sig := Cat(DecodeE5M2.signed_sig, 0.U(8.W)).asSInt
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
-        TF32conv.exp := DecodeTF32.exp.pad(10)
-        TF32conv.signed_sig := DecodeTF32.signed_sig
-        TF32conv.exception := DecodeTF32.exception
-        TF32conv.sign := DecodeTF32.sign
-        io.out.TF32Vec(i) := Mux1H(Seq(
-            isF16 -> FP16toTF32,
+        var decodeCases = Seq(
             isBF16 -> BF16toTF32,
-            isTF32 -> TF32conv,
             isE4M3 -> E4M3toTF32,
             isE5M2 -> E5M2toTF32,
             isDefaultTF32Vec -> TF32i8(i)
-        ))
+        )
+        if (cuteFpeConfig.enableFp16Fp32) {
+            val DecodeFP16 = RawFloat.fromUInt(Bits16, 5, 11)
+            val FP16toTF32 = Wire(new RawFloat(10, 11))
+            FP16toTF32.exp := DecodeFP16.exp.pad(10)
+            FP16toTF32.signed_sig := DecodeFP16.signed_sig
+            FP16toTF32.exception := DecodeFP16.exception
+            FP16toTF32.sign := DecodeFP16.sign
+            decodeCases = decodeCases :+ (isF16 -> FP16toTF32)
+        }
+        if (cuteFpeConfig.enableTf32Fp32) {
+            val DecodeTF32 = RawFloat.fromUInt(Bits32(31, 13), 8, 11)
+            val TF32conv = Wire(new RawFloat(10, 11))
+            TF32conv.exp := DecodeTF32.exp.pad(10)
+            TF32conv.signed_sig := DecodeTF32.signed_sig
+            TF32conv.exception := DecodeTF32.exception
+            TF32conv.sign := DecodeTF32.sign
+            decodeCases = decodeCases :+ (isTF32 -> TF32conv)
+        }
+        io.out.TF32Vec(i) := Mux1H(decodeCases)
     }
 
     for(i <- ReduceWidth/32 until ReduceWidth/16){
         val Bits8  = io.in(8 * i + 7, 8 * i)
         val Bits16 = io.in(16 * i + 15, 16 * i)
-        val DecodeFP16 = RawFloat.fromUInt(Bits16, 5, 11)
         val DecodeBF16 = RawFloat.fromUInt(Bits16, 8, 8)
         val DecodeE4M3 = RawFloat.frome4m3(Bits8)
         val DecodeE5M2 = RawFloat.fromUInt(Bits8, 5, 3)
-        val FP16toTF32 = Wire(new RawFloat(10, 11))
         val BF16toTF32 = Wire(new RawFloat(10, 11))
         val E4M3toTF32 = Wire(new RawFloat(10, 11))
         val E5M2toTF32 = Wire(new RawFloat(10, 11))
-        FP16toTF32.exp := DecodeFP16.exp.pad(10)
-        FP16toTF32.signed_sig := DecodeFP16.signed_sig
-        FP16toTF32.exception := DecodeFP16.exception
-        FP16toTF32.sign := DecodeFP16.sign
         BF16toTF32.exp := DecodeBF16.exp
         BF16toTF32.signed_sig := Cat(DecodeBF16.signed_sig, 0.U(3.W)).asSInt// 有符号数，所以12位
         BF16toTF32.exception := DecodeBF16.exception
@@ -123,14 +122,25 @@ class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
         E5M2toTF32.signed_sig := Cat(DecodeE5M2.signed_sig, 0.U(8.W)).asSInt
         E5M2toTF32.exception := DecodeE5M2.exception
         E5M2toTF32.sign := DecodeE5M2.sign
-        io.out.TF32Vec(i) := Mux1H(Seq(
-            isF16 -> FP16toTF32,
+        var decodeCases = Seq(
             isBF16 -> BF16toTF32,
-            isTF32 -> TF32Zero,
             isE4M3 -> E4M3toTF32,
             isE5M2 -> E5M2toTF32,
             isDefaultTF32Vec -> TF32i8(i)
-        ))
+        )
+        if (cuteFpeConfig.enableFp16Fp32) {
+            val DecodeFP16 = RawFloat.fromUInt(Bits16, 5, 11)
+            val FP16toTF32 = Wire(new RawFloat(10, 11))
+            FP16toTF32.exp := DecodeFP16.exp.pad(10)
+            FP16toTF32.signed_sig := DecodeFP16.signed_sig
+            FP16toTF32.exception := DecodeFP16.exception
+            FP16toTF32.sign := DecodeFP16.sign
+            decodeCases = decodeCases :+ (isF16 -> FP16toTF32)
+        }
+        if (cuteFpeConfig.enableTf32Fp32) {
+            decodeCases = decodeCases :+ (isTF32 -> TF32Zero)
+        }
+        io.out.TF32Vec(i) := Mux1H(decodeCases)
     }
 
     for(i <- ReduceWidth/16 until ReduceWidth/8){

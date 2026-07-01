@@ -103,9 +103,14 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
     
     for (i <- 0 until ReduceWidth/16){
         cmptreefp8p0.io.in(i) := MulExpVec(i)
+        val useHighHalfMulExp = Seq(
+            Option.when(cuteFpeConfig.enableMxfp8Fp32)(io.opcode === FReduceComputeType.Mxfp8e4m3F32),
+            Option.when(cuteFpeConfig.enableMxfp8Fp32)(io.opcode === FReduceComputeType.Mxfp8e5m2F32),
+            Some(io.opcode === FReduceComputeType.Fp8e4m3F32),
+            Some(io.opcode === FReduceComputeType.Fp8e5m2F32)
+        ).flatten.reduce(_ || _)
         cmptreefp8p0.io.in(i + ReduceWidth/16) := Mux(
-            (io.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.opcode === FReduceComputeType.Mxfp8e5m2F32 ||
-             io.opcode === FReduceComputeType.Fp8e4m3F32 || io.opcode === FReduceComputeType.Fp8e5m2F32),
+            useHighHalfMulExp,
             MulExpVec(i + ReduceWidth/16), 0.U
         )
     }
@@ -274,14 +279,19 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
     MulExpVecSigned(ReduceWidth/8) := CDecode.exp.pad(9) //for debug
 
     io.out.ExceptionVec(ReduceWidth/8) := CDecode.exception
-    io.out.CMantissa := Mux(
-        (io.opcode === FReduceComputeType.F16F16F32 || io.opcode === FReduceComputeType.BF16BF16F32 ||
-         io.opcode === FReduceComputeType.TF32TF32F32 || io.opcode === FReduceComputeType.Mxfp8e4m3F32 ||
-         io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Nvfp4F32 ||
-         io.opcode === FReduceComputeType.Mxfp4F32 || io.opcode === FReduceComputeType.Fp8e4m3F32 ||
-         io.opcode === FReduceComputeType.Fp8e5m2F32),
-        CDecode.signed_sig.pad(32), io.inC.asSInt
-    )
+    val useDecodedCMantissa = Seq(
+        Option.when(cuteFpeConfig.enableFp16Fp32)(io.opcode === FReduceComputeType.F16F16F32),
+        Some(io.opcode === FReduceComputeType.BF16BF16F32),
+        Option.when(cuteFpeConfig.enableTf32Fp32)(io.opcode === FReduceComputeType.TF32TF32F32),
+        Option.when(cuteFpeConfig.enableMxfp8Fp32)(io.opcode === FReduceComputeType.Mxfp8e4m3F32),
+        Option.when(cuteFpeConfig.enableMxfp8Fp32)(io.opcode === FReduceComputeType.Mxfp8e5m2F32),
+        Option.when(cuteFpeConfig.enableNvfp4Fp32)(io.opcode === FReduceComputeType.Nvfp4F32),
+        Option.when(cuteFpeConfig.enableMxfp4Fp32)(io.opcode === FReduceComputeType.Mxfp4F32),
+        Some(io.opcode === FReduceComputeType.Fp8e4m3F32),
+        Some(io.opcode === FReduceComputeType.Fp8e5m2F32)
+    ).flatten.reduce(_ || _)
+
+    io.out.CMantissa := Mux(useDecodedCMantissa, CDecode.signed_sig.pad(32), io.inC.asSInt)
     
     if (DEBUG_FP8) {
         printf("c mantissa: %x\n", io.out.CMantissa)
