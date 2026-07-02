@@ -47,6 +47,11 @@ resolvers ++= Seq(
 libraryDependencies ++= Seq("org.chipsalliance" %% "chisel" % chisel6Version)
 addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chisel6Version cross CrossVersion.full)
 
+Compile / unmanagedSourceDirectories ++= {
+  val cdeSrc = (baseDirectory.value / "../../../rocket-chip/cde/cde/src").getCanonicalFile
+  if (cdeSrc.exists) Seq(cdeSrc) else Nil
+}
+
 
 libraryDependencies ++= Seq(
   "org.apache.commons" % "commons-lang3" % "3.12.0",
