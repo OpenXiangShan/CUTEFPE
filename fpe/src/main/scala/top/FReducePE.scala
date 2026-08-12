@@ -21,6 +21,13 @@ object FReduceComputeType {
     val Mxfp4F32 = 10.U(ComputeTypeBitWidth.W)
     val Fp8e4m3F32 = 11.U(ComputeTypeBitWidth.W)
     val Fp8e5m2F32 = 12.U(ComputeTypeBitWidth.W)
+    val I2I8I32 = 13.U(ComputeTypeBitWidth.W)
+
+    def isInt8Like(opcode: UInt): Bool = {
+        opcode === I8I8I32 || opcode === I8U8I32 ||
+        opcode === U8I8I32 || opcode === U8U8I32 ||
+        opcode === I2I8I32
+    }
 }
 
 class RawFloatException extends Bundle {
@@ -162,7 +169,7 @@ class FVecDecoder(implicit p: Parameters) extends CuteModule {
     val TF32i8 = Wire(Vec(ReduceWidth/8, new RawFloat(10, 11)))
     for(i <- 0 until ReduceWidth/8){
         TF32i8(i) := RawFloat.fromUInt(0.U(21.W), 10, 11)
-        TF32i8(i).signed_sig := Mux(io.opcode === FReduceComputeType.I8I8I32,
+        TF32i8(i).signed_sig := Mux(io.opcode === FReduceComputeType.I8I8I32 || io.opcode === FReduceComputeType.I2I8I32,
             io.in(8 * i + 7, 8 * i).asSInt.pad(12), io.in(8 * i + 7, 8 * i).pad(12).asSInt
         )
     }
@@ -819,10 +826,10 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     for(i <- 0 until ReduceWidth/16 + 1){
         if(i != ReduceWidth/16){
-            Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
+            Product0(i) := Mux(FReduceComputeType.isInt8Like(io.in.opcode),
                 io.in.Product0(i).pad(26), ProductRShift(i))
         } else {
-            Product0(i) := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
+            Product0(i) := Mux(FReduceComputeType.isInt8Like(io.in.opcode),
                 0.S(26.W), ProductRShift(ReduceWidth/8))
         }
     }
@@ -900,7 +907,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteModule {
 
     io.out.ReduceRes0 := SumResult0
     io.out.ReduceRes1 := SumResult1
-    io.out.CMantissa := Mux(io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 || io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32,
+    io.out.CMantissa := Mux(FReduceComputeType.isInt8Like(io.in.opcode),
         io.in.CMantissa, Mux(io.in.SignVec(ReduceWidth/8), -Product0(ReduceWidth/16), Product0(ReduceWidth/16)).pad(32))
     // Select MaxExp
     val isFp4WithScaleOp = io.in.opcode === FReduceComputeType.Nvfp4F32 || io.in.opcode === FReduceComputeType.Mxfp4F32
@@ -972,8 +979,7 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
 
 
     ReduceRes := Mux(
-        (io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 ||
-         io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32 ||
+        (FReduceComputeType.isInt8Like(io.in.opcode) ||
          io.in.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.in.opcode === FReduceComputeType.Mxfp8e5m2F32 ||
          io.in.opcode === FReduceComputeType.Fp8e4m3F32 || io.in.opcode === FReduceComputeType.Fp8e5m2F32),
         SumResult0 + SumResult1.pad(32), SumResult0
@@ -1056,8 +1062,7 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteModule {
     }
     Result := Cat(ResultSign, ResultExp, ResultSig(22, 0))
     io.out := Mux(
-        (io.in.opcode === FReduceComputeType.I8I8I32 || io.in.opcode === FReduceComputeType.I8U8I32 ||
-         io.in.opcode === FReduceComputeType.U8I8I32 || io.in.opcode === FReduceComputeType.U8U8I32),
+        FReduceComputeType.isInt8Like(io.in.opcode),
         ReduceResI.asUInt, Mux(IsException, ExceptionBits, Result)
     )
 }
@@ -1074,7 +1079,7 @@ class FReducePE(implicit p: Parameters) extends CuteModule {
           Flipped(DecoupledIO(UInt((ReduceWidth/MinDataTypeWidth/MinGroupSize * ScaleElementWidth).W)))
         )
         val DResult = DecoupledIO(UInt(ResultWidth.W))
-        val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8, 7:MXFP8E4M3, 8:MXFP8e5m2 9:NVFP4, 10:MXFP4, 11:FP8E4M3, 12:FP8E5M2
+        val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))   //0:Int8, 1:FP16, 2:BF16, 3:TF32, 4:I8 * UI8, 5:UI8 * I8, 6:UI8 * UI8, 7:MXFP8E4M3, 8:MXFP8e5m2 9:NVFP4, 10:MXFP4, 11:FP8E4M3, 12:FP8E5M2, 13:I2I8I32
     })
 
     // for DEBUG
