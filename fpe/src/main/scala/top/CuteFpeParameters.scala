@@ -18,9 +18,6 @@ trait CuteFpeParameters {
   def P2AddNum: Int
   def FP4P0AddNum: Int
   def FP4P1AddNum: Int
-
-  def DEBUG_FP8: Boolean
-  def DEBUG_FP4: Boolean
 }
 
 object DefaultCuteFpeParameters extends CuteFpeParameters {
@@ -39,9 +36,6 @@ object DefaultCuteFpeParameters extends CuteFpeParameters {
 
   def FP4P0AddNum: Int = 2
   def FP4P1AddNum: Int = 16 / FP4P0AddNum
-
-  def DEBUG_FP8: Boolean = true
-  def DEBUG_FP4: Boolean = false
 }
 
 case object CuteFpeParamsKey extends Field[CuteFpeParameters](DefaultCuteFpeParameters)
@@ -65,9 +59,6 @@ trait HasCuteFpeParameters extends CuteFpeParameters {
   def P2AddNum: Int = fpeParams.P2AddNum
   def FP4P0AddNum: Int = fpeParams.FP4P0AddNum
   def FP4P1AddNum: Int = fpeParams.FP4P1AddNum
-
-  def DEBUG_FP8: Boolean = fpeParams.DEBUG_FP8
-  def DEBUG_FP4: Boolean = fpeParams.DEBUG_FP4
 }
 
 class CuteFpeModule(implicit val p: Parameters) extends Module with HasCuteFpeParameters
