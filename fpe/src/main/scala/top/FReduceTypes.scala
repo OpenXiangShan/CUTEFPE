@@ -1,8 +1,6 @@
 package cute
 
 import chisel3._
-import chisel3.util._
-import org.chipsalliance.cde.config._
 
 object FReduceComputeType {
     val ComputeTypeBitWidth = 4
@@ -22,106 +20,95 @@ object FReduceComputeType {
     val Fp8e5m2F32 = 12.U(ComputeTypeBitWidth.W)
 }
 
-class RawFloatException extends Bundle {
-    val is_nan = Bool()
-    val is_inf = Bool()
-    val is_zero = Bool()
-  }
+/**
+  * The complete opcode namespace adds seven formats beyond the old public
+  * enumeration.  Keep the four-bit object above unchanged because it is part
+  * of the public FReducePE contract.  The datapath uses this five-bit
+  * namespace internally and narrows only at the FReducePE boundary.
+  */
+object FpeOpcode {
+  val Width = 5
 
-  class RawFloat(val expWidth: Int, val precision: Int) extends Bundle {
-    val sign = Bool()
-    val exp = SInt(expWidth.W)
-    val signed_sig = SInt((precision + 1).W)
-    val exception = new RawFloatException
-  }
+  private def op(value: Int): UInt = value.U(Width.W)
 
-  object RawFloat {
-    // 不能用于e2m1和e4m3！这两个的异常值定义不同，e2m1没有异常值，e4m3只在0bx1111111时为NAN，指数全一为最大指数，但在这里会被处理成负数
-    def fromUInt(x: UInt, expWidth: Int, pc: Int, E4M3: Boolean = false, E2M1: Boolean = false): RawFloat = {
-      val fp = Wire(new RawFloat(expWidth, pc))
-      val nz =  x(expWidth + pc - 2, pc - 1).orR
-      val sign = x(expWidth + pc - 1)
-      fp.sign := sign
-      val bias = Wire(UInt(expWidth.W))
-      bias := (1.U << (expWidth - 1)) - 1.U //
-      fp.exp := ((x(expWidth + pc - 2, pc - 1) | !nz).asUInt - bias).asSInt
-      val sig = Cat(0.U(1.W), nz, x(pc - 2, 0))
-    //   fp.signed_sig := Mux(sign, -sig.asSInt.pad(pc + 1), sig.asSInt.pad(pc + 1))
-      fp.signed_sig := sig.asSInt
-      // 不能用e4m3
-    //   if (E4M3) {
-    //     fp.exception.is_nan := x(expWidth + pc - 2, 0).andR 
-    //     fp.exception.is_inf := false.B
-    //   }
-    //   else 
-      if (E2M1) {
-        fp.exception.is_nan := false.B
-        fp.exception.is_inf := false.B
-      }
-      else {
-        fp.exception.is_nan := x(expWidth + pc - 2, pc - 1).andR && x(pc - 2, 0).orR
-        fp.exception.is_inf := x(expWidth + pc - 2, pc - 1).andR && !x(pc - 2, 0).orR
-      }
-      fp.exception.is_zero := !x(expWidth + pc - 2, 0).orR
-      fp
-    }
+  val I8I8I32      = op(0)
+  val F16F16F32    = op(1)
+  val BF16BF16F32  = op(2)
+  val TF32TF32F32  = op(3)
+  val I8U8I32      = op(4)
+  val U8I8I32      = op(5)
+  val U8U8I32      = op(6)
+  val Mxfp8e4m3F32 = op(7)
+  val Mxfp8e5m2F32 = op(8)
+  val Nvfp4F32     = op(9)
+  val Mxfp4F32     = op(10)
+  val Fp8e4m3F32   = op(11)
+  val Fp8e5m2F32   = op(12)
+  val Mxfp6e3m2F32 = op(13)
+  val Mxfp6e2m3F32 = op(14)
+  val I4I4I32      = op(15)
+  val I4U4I32      = op(16)
+  val U4I4I32      = op(17)
+  val U4U4I32      = op(18)
+  val Mxint4F32    = op(19)
 
-    // e4m3单独处理，在计算时用5位表示exp
-    def frome4m3(x: UInt): RawFloat = {
-        val fp = Wire(new RawFloat(5, 4))
-        val nz =  x(4 + 4 - 2, 4 - 1).orR
-        val sign = x(4 + 4 - 1)
-        fp.sign := sign
-        val bias = Wire(UInt(5.W))
-        bias := (1.U << (4 - 1)) - 1.U //
-        fp.exp := ((x(4 + 4 - 2, 4 - 1) | !nz).asUInt.pad(5) - bias).asSInt
-        val sig = Cat(0.U(1.W), nz, x(4 - 2, 0))
-        //   fp.signed_sig := Mux(sign, -sig.asSInt.pad(pc + 1), sig.asSInt.pad(pc + 1))
-        fp.signed_sig := sig.asSInt
+  def isMxfp8OrFp6(opcode: UInt): Bool =
+    opcode === Mxfp8e4m3F32 || opcode === Mxfp8e5m2F32 ||
+      opcode === Mxfp6e3m2F32 || opcode === Mxfp6e2m3F32
 
-        fp.exception.is_nan := x(4 + 4 - 2, 0).andR 
-        fp.exception.is_inf := false.B
-        fp.exception.is_zero := !x(4 + 4 - 2, 0).orR
-        fp
-    }
+  def isMxIntFp4(opcode: UInt): Bool =
+    opcode === Nvfp4F32 || opcode === Mxfp4F32 || opcode === Mxint4F32
+
+  def requiresScale(opcode: UInt): Bool =
+    isMxfp8OrFp6(opcode) || isMxIntFp4(opcode)
 }
 
-// Transform FP4 to fixed point for accumulation
-class FP4toint(implicit p: Parameters) extends CuteFpeModule {
-    // Output format is xxxx.x
-    // For example, 00001 represents 0.5
-    val io = IO(new Bundle{
-        val in = Input(UInt(4.W))
-        val out = Output(SInt(5.W))
-    })
-
-    val sign = io.in(3)
-    val exp = io.in(2, 1)
-    val mantissa = io.in(0)
-    val nz = exp.orR
-    val sig = Cat(0.U(3.W), nz, mantissa).asSInt // 5位无符号数
-    val unsignedSig = Wire(SInt(5.W))
-
-    when(exp === 2.U){
-        unsignedSig := sig << 1.U
-    }.elsewhen(exp === 3.U){
-        unsignedSig := sig << 2.U
-    }.otherwise{
-        unsignedSig := sig
-    }
-
-    io.out := Mux(sign, -unsignedSig.asSInt, unsignedSig.asSInt)
+/** Common complete decode controls which cross the first two pipeline cuts. */
+class FpeDecodeFlags extends Bundle {
+  val highPrecision = Bool()
+  val lowPrecision = Bool()
+  val mxNvFp4 = Bool()
+  val int8 = Bool()
+  val int4 = Bool()
+  val mxInt4 = Bool()
+  val intFp4 = Bool()
+  val mxIntFp4 = Bool()
 }
 
-class CLZ(len: Int)(implicit p: Parameters) extends CuteFpeModule {
+/** Decoded one-side 32-bit lane fields before the complete multiplier selection. */
+class FpeOperandDecode extends Bundle {
+  val v8 = Vec(2, UInt(8.W))
+  val v4 = Vec(2, UInt(4.W))
+  val expE5 = Vec(4, UInt(5.W))
+  val zero = Vec(4, Bool())
+  val sign = UInt(8.W)
+  val nzE5 = UInt(4.W)
+  val nzE3 = UInt(4.W)
+}
 
-  val inWidth = len
-  val outWidth = (inWidth - 1).U.getWidth
+/** Complete decoded result for one 32-bit A/B lane pair. */
+class FpeLaneDecode extends Bundle {
+  val a8 = Vec(2, UInt(8.W))
+  val a4 = Vec(2, UInt(4.W))
+  val b4 = Vec(2, UInt(4.W))
+  val b8 = Vec(2, UInt(8.W))
+  val expE6 = Vec(4, UInt(6.W))
+  val sign = UInt(8.W)
+  val nan = Bool()
+  val pInf = Bool()
+  val nInf = Bool()
+  val mxIntFp4AllZero = Bool()
+  val mxFp86AllZero = Bool()
+}
 
-  val io = IO(new Bundle() {
-    val in = Input(UInt(inWidth.W))
-    val out = Output(UInt(outWidth.W))
-  })
+/** One 32-bit lane after the complete mantissa product packing stage. */
+class FpeMulResult extends Bundle {
+  val product = Vec(2, UInt(22.W))
+  val expE6 = Vec(4, UInt(6.W))
+}
 
-  io.out := PriorityEncoder(io.in.asBools.reverse)
+class FpeExceptionVector extends Bundle {
+  val nan = UInt(4.W)
+  val inf = UInt(4.W)
+  val zero = UInt(4.W)
 }

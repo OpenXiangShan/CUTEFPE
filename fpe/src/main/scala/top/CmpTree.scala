@@ -2,86 +2,68 @@ package cute
 
 import chisel3._
 import chisel3.util._
-import org.chipsalliance.cde.config._
 
-class CmpTreeP0Res(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeBundle{
-    val part1   = UInt((elemNum).W)   //第6层mask（也就是mask(5)）,用于算后续的mask
-    val part2   = Vec(expWidth - layers, UInt((elemNum).W)) //6层以后的数据传到下一层
-    val part3   = UInt(layers.W) //前6层的结果
+/** The first half of a bit-mask exponent comparison tree. */
+class FpeComparePrefix(elementNum: Int, prefixWidth: Int, remainingWidth: Int) extends Bundle {
+  val mask = UInt(elementNum.W)
+  val remaining = Vec(remainingWidth, UInt(elementNum.W))
+  val maximum = UInt(prefixWidth.W)
 }
 
-class CmpTreeP0(layers:Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeModule {
-    val io = IO(new Bundle {
-        val in    = Input(Vec(elemNum, UInt(expWidth.W)))
-        val out   = Output(new CmpTreeP0Res(layers, elemNum, expWidth))
-    })
+/**
+  * Bit-mask comparison helpers used at the Pipe1/Pipe2 boundary.
+  *
+  * A prefix comparison carries the surviving lane mask and the unexamined bit
+  * planes through the register boundary.  Pipe2 resumes from that exact
+  * candidate set instead of rebuilding a full comparator in a later stage.
+  */
+object FpeCmpTree {
+  private def bitPlane(values: Seq[UInt], bit: Int): UInt =
+    VecInit(values.map(_(bit))).asUInt
 
-  // 生成 in_vec_0: 9组，每组ReduceWidth/16位
-    val inVec0 = Wire(Vec(expWidth, UInt((elemNum).W)))
-    for (j <- 0 until expWidth) {
-        inVec0(j) := Cat((0 until elemNum).reverse.map(i => io.in(i)(expWidth - 1 - j)))
+  private def select(mask: UInt, planes: Seq[UInt]): UInt = {
+    planes.foldLeft(mask) { case (candidates, plane) =>
+      val hit = candidates & plane
+      Mux(hit.orR, hit, candidates)
     }
+  }
 
-  // 生成 mask: 9组，每组ReduceWidth/16位
-    val mask = Wire(Vec(layers, UInt((elemNum).W)))
-    mask(0) := Mux(inVec0(0) === 0.U, ~inVec0(0), inVec0(0))
-    for (i <- 1 until layers) {
-        val prev = Wire(UInt((elemNum).W))
-        val curr = Wire(UInt((elemNum).W))
-        val prevandcurr = Wire(UInt((elemNum).W))
-        prev := mask(i - 1)
-        curr := inVec0(i)
-        prevandcurr := (prev & curr)
-        mask(i) := Mux(prevandcurr === 0.U, prev, prevandcurr)
+  def prefix(values: Seq[UInt], width: Int, prefixWidth: Int): FpeComparePrefix = {
+    require(values.nonEmpty, "FPE compare tree requires at least one input")
+    require(prefixWidth > 0 && prefixWidth < width,
+      s"invalid compare-tree prefix: $prefixWidth of $width bits")
+
+    val elementNum = values.length
+    val prefixPlanes = (0 until prefixWidth).map { offset =>
+      bitPlane(values, width - 1 - offset)
     }
+    val selected = select(Fill(elementNum, 1.B).asUInt, prefixPlanes)
+    val out = Wire(new FpeComparePrefix(elementNum, prefixWidth, width - prefixWidth))
 
-  // 生成 out: 9位
-    io.out.part1 := mask(layers - 1)
-    for(i <- 0 until (expWidth - layers)){
-        io.out.part2(i) := inVec0(i + layers)
+    out.mask := selected
+    for (index <- 0 until width - prefixWidth) {
+      out.remaining(index) := bitPlane(values, width - prefixWidth - 1 - index)
     }
+    out.maximum := Cat(prefixPlanes.map(plane => (selected & plane).orR))
+    out
+  }
 
-    val res = Wire(Vec(layers, UInt(1.W)))
-    for(i <- 0 until layers){
-        val bit = Wire(UInt((elemNum).W))
-        bit := mask(layers - 1) & inVec0(i)
-        res(i) := Mux(bit === 0.U, 0.U, 1.U)
-    }
+  def finish(mask: UInt, remaining: Seq[UInt]): UInt = {
+    require(remaining.nonEmpty, "FPE compare tree finish requires remaining bits")
+    val selected = select(mask, remaining)
+    Cat(remaining.map(plane => (selected & plane).orR))
+  }
 
-    io.out.part3 := Cat((0 until layers).map(k => res(k)))
-}
+  def mask(values: Seq[UInt], width: Int): UInt = {
+    require(values.nonEmpty, "FPE compare tree requires at least one input")
+    val planes = (0 until width).map { offset => bitPlane(values, width - 1 - offset) }
+    select(Fill(values.length, 1.B).asUInt, planes)
+  }
 
-class CmpTreeP1(layers : Int, elemNum:Int, expWidth:Int)(implicit p: Parameters) extends CuteFpeModule {
-    val io = IO(new Bundle {
-        val in    = Input(new CmpTreeP0Res(layers, elemNum, expWidth))
-        val out   = Output(UInt(expWidth.W))
-    })
-
-    val mask = Wire(Vec(expWidth - layers, UInt((elemNum).W)))
-    for (i <- 0 until (expWidth - layers)) {
-        val prev = Wire(UInt((elemNum).W))
-        val curr = Wire(UInt((elemNum).W))
-        val prevandcurr = Wire(UInt((elemNum).W))
-        if(i != 0){
-            prev := mask(i - 1)
-        }else{
-            prev := io.in.part1
-        }
-        curr := io.in.part2(i)
-        prevandcurr := (prev & curr)
-        mask(i) := Mux(prevandcurr === 0.U, prev, prevandcurr)
-    }
-
-    val res = Wire(Vec(expWidth - layers, UInt(1.W)))
-    for(i <- 0 until (expWidth - layers)){
-        val bit = Wire(UInt(elemNum.W))
-        bit := mask(expWidth - 1 - layers) & io.in.part2(i)
-        res(i) := Mux(bit === 0.U, 0.U, 1.U)
-    }
-
-    val partres = Wire(UInt((expWidth - layers).W))
-    partres := Cat((0 until (expWidth - layers)).map(k => res(k)))
-
-  // 生成 out: 9位
-    io.out := Cat(io.in.part3, partres)
+  def maximum(values: Seq[UInt], width: Int): UInt = {
+    require(values.nonEmpty, "FPE compare tree requires at least one input")
+    val planes = (0 until width).map { offset => bitPlane(values, width - 1 - offset) }
+    val selected = select(Fill(values.length, 1.B).asUInt, planes)
+    Cat(planes.map(plane => (selected & plane).orR))
+  }
 }
