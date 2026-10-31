@@ -5,7 +5,8 @@ case class CuteFpeConfig(
   enableFp16Fp32: Boolean = false,
   enableMxfp4Fp32: Boolean = false,
   enableMxfp8Fp32: Boolean = false,
-  enableNvfp4Fp32: Boolean = false
+  enableNvfp4Fp32: Boolean = false,
+  enableInt8Int32: Boolean = true
 ) {
   def enableScalingFactor: Boolean =
     enableNvfp4Fp32 || enableMxfp4Fp32 || enableMxfp8Fp32

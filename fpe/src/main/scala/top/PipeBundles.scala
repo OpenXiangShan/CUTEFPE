@@ -43,7 +43,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
 
 class FPipe2Result(implicit p: Parameters) extends CuteFpeBundle{
     val ReduceRes0 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W))
-    val ReduceRes1 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
+    val ReduceRes1 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)) // Low/high-half reductions are shared by FP8 and INT8
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(10.W)
     val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)
@@ -56,7 +56,7 @@ class FPipe2Result(implicit p: Parameters) extends CuteFpeBundle{
 class FPipe3Result(implicit p: Parameters) extends CuteFpeBundle{
     // val ReduceRes = SInt(32.W) //归约计算结果
     val ReduceRes0 = SInt((32).W)
-    val ReduceRes1 = SInt((32).W) // ReduceRes0是尾数右移后的结果，ReduceRes1是Int8的结果
+    val ReduceRes1 = SInt((32).W) // Low/high-half reductions are shared by FP8 and INT8
     // val ReduceResFP4 = SInt(32.W)
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(10.W)
