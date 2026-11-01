@@ -31,6 +31,15 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
 
     val CDecode = RawFloat.fromUInt(io.inC, 8, AccumulatorSignificandPrecision)
 
+    private def multiplierOperand(sig: SInt, params: CuteFpeMultiplierParams): UInt = {
+        val floatOperand = sig(params.width + params.padding - 1, params.padding)
+        if (params.useTwosComplement && params.padding > 0) {
+            Mux(FReduceComputeType.isInt8(io.opcode), sig(params.width - 1, 0), floatOperand)
+        } else {
+            floatOperand
+        }
+    }
+
     // 1. Mantissa product
     if (DEBUG_FP8) {
         for (i <- 0 until ReduceWidth/8) {
@@ -40,15 +49,19 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
     }
 
     // Product0
-    // The width of the multiplier needs to support the multiplication of 12-bit signed integers
+    val multiplier0 = cuteFpeConfig.product0MultiplierParams
     for(i <- 0 until ReduceWidth/16){
-        val Product0A = Wire(SInt(12.W))
-        val Product0B = Wire(SInt(12.W))
+        val Product0A = Wire(UInt(multiplier0.width.W))
+        val Product0B = Wire(UInt(multiplier0.width.W))
 
-        Product0A := io.inA.TF32Vec(i).signed_sig
-        Product0B := io.inB.TF32Vec(i).signed_sig
+        Product0A := multiplierOperand(io.inA.TF32Vec(i).signed_sig, multiplier0)
+        Product0B := multiplierOperand(io.inB.TF32Vec(i).signed_sig, multiplier0)
 
-        io.out.Product0(i) := Product0A * Product0B
+        io.out.Product0(i) := (if (multiplier0.useTwosComplement) {
+            Product0A.asSInt * Product0B.asSInt
+        } else {
+            (Product0A * Product0B).zext
+        })
         if (DEBUG_FP8)
         {printf("Product0A[%d]: %x\n", i.U,Product0A)
         printf("Product0B[%d]: %x\n", i.U,Product0B)
@@ -56,15 +69,19 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
     }
 
     // Product1
-    // The width of the multiplier needs to support the multiplication of 9-bit signed integers
+    val multiplier1 = cuteFpeConfig.product1MultiplierParams
     for(i <- ReduceWidth/16 until ReduceWidth/8){
-        val Product1A = Wire(SInt(12.W))
-        val Product1B = Wire(SInt(12.W))
+        val Product1A = Wire(UInt(multiplier1.width.W))
+        val Product1B = Wire(UInt(multiplier1.width.W))
 
-        Product1A := io.inA.TF32Vec(i).signed_sig.asSInt
-        Product1B := io.inB.TF32Vec(i).signed_sig.asSInt
+        Product1A := multiplierOperand(io.inA.TF32Vec(i).signed_sig, multiplier1)
+        Product1B := multiplierOperand(io.inB.TF32Vec(i).signed_sig, multiplier1)
 
-        io.out.Product1(i - ReduceWidth/16) := Product1A * Product1B
+        io.out.Product1(i - ReduceWidth/16) := (if (multiplier1.useTwosComplement) {
+            Product1A.asSInt * Product1B.asSInt
+        } else {
+            (Product1A * Product1B).zext
+        })
     }
 
     // 2. Exponent calculation
@@ -400,7 +417,9 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     
     for(i <- 0 until ReduceWidth/16){
         val tempProduct0 = Wire(SInt(26.W))
-        tempProduct0 := Cat(io.in.Product0(i)(FullProductWidth - 1, 0), 0.U(ProductAlignmentPadding.W)).asSInt
+        // Restore omitted product bits and align the fractional bits with FP32 C.
+        tempProduct0 := Cat(io.in.Product0(i).asUInt,
+            0.U((cuteFpeConfig.product0MultiplierParams.productPadding + ProductAlignmentPadding).W)).asSInt
         ProductRShift(i) := tempProduct0 >> io.in.RightShiftVec(i)
         if (DEBUG_FP8) {
             printf("ProductRShift[%d]: %x\n", i.U,ProductRShift(i))
@@ -409,7 +428,8 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
 
     for(i <- 0 until ReduceWidth/16){
         val tempProduct1 = Wire(SInt(26.W))
-        tempProduct1 := Cat(io.in.Product1(i)(FullProductWidth - 1, 0), 0.U(ProductAlignmentPadding.W)).asSInt
+        tempProduct1 := Cat(io.in.Product1(i).asUInt,
+            0.U((cuteFpeConfig.product1MultiplierParams.productPadding + ProductAlignmentPadding).W)).asSInt
         ProductRShift(ReduceWidth/16 + i) := tempProduct1 >> io.in.RightShiftVec(ReduceWidth/16 + i)
         if (DEBUG_FP8) {
             printf("ProductRShift[%d]: %x\n", (i + ReduceWidth/16).U,ProductRShift(ReduceWidth/16 + i))
