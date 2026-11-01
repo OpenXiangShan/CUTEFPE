@@ -103,25 +103,33 @@ class FReducePE(implicit p: Parameters) extends CuteFpeModule {
     val BDecoder = Module(new FVecDecoder)
 
     ADecoder.io.in := io.AVector.bits
-    ADecoder.io.opcode := Mux(
-        io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.I8I8I32,
-        FReduceComputeType.I8I8I32,
+    ADecoder.io.opcode := (if (cuteFpeConfig.enableInt8Int32) {
         Mux(
-            io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.U8U8I32,
-            FReduceComputeType.I8U8I32,
-            io.opcode
+            io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.I8I8I32,
+            FReduceComputeType.I8I8I32,
+            Mux(
+                io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.U8U8I32,
+                FReduceComputeType.I8U8I32,
+                io.opcode
+            )
         )
-    )
+    } else {
+        io.opcode
+    })
     BDecoder.io.in := io.BVector.bits
-    BDecoder.io.opcode := Mux(
-        io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.I8I8I32,
-        FReduceComputeType.I8I8I32,
+    BDecoder.io.opcode := (if (cuteFpeConfig.enableInt8Int32) {
         Mux(
-            io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.U8U8I32,
-            FReduceComputeType.I8U8I32,
-            io.opcode
+            io.opcode === FReduceComputeType.U8I8I32 || io.opcode === FReduceComputeType.I8I8I32,
+            FReduceComputeType.I8I8I32,
+            Mux(
+                io.opcode === FReduceComputeType.I8U8I32 || io.opcode === FReduceComputeType.U8U8I32,
+                FReduceComputeType.I8U8I32,
+                io.opcode
+            )
         )
-    )
+    } else {
+        io.opcode
+    })
 
     // For MXFP8, directly add UE8M0 scaling factor to exponent.
     val scaleSum = io.AScale.zip(io.BScale).flatMap { case (aScale, bScale) =>

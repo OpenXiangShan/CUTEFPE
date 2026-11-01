@@ -20,6 +20,9 @@ object FReduceComputeType {
     val Mxfp4F32 = 10.U(ComputeTypeBitWidth.W)
     val Fp8e4m3F32 = 11.U(ComputeTypeBitWidth.W)
     val Fp8e5m2F32 = 12.U(ComputeTypeBitWidth.W)
+
+    def isInt8(opcode: UInt): Bool =
+        opcode === I8I8I32 || opcode === I8U8I32 || opcode === U8I8I32 || opcode === U8U8I32
 }
 
 class RawFloatException extends Bundle {
