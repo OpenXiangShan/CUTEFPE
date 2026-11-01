@@ -5,8 +5,8 @@ import chisel3.util._
 import org.chipsalliance.cde.config._
 
 class FPipe0Result(implicit p: Parameters) extends CuteFpeBundle{
-    val Product0 = Vec(ReduceWidth/16, SInt(23.W))
-    val Product1 = Vec(ReduceWidth/16, SInt(23.W))
+    val Product0 = Vec(ReduceWidth/16, SInt(CuteFpeConfig.FullProductWidth.W))
+    val Product1 = Vec(ReduceWidth/16, SInt(CuteFpeConfig.FullProductWidth.W))
     val FP4ReduceRes = Option.when(cuteFpeConfig.enableFp4withsf)(
         Vec(ReduceWidth/4/FP4P0AddNum, SInt((10 + log2Ceil(FP4P0AddNum)).W))
     )
@@ -22,8 +22,8 @@ class FPipe0Result(implicit p: Parameters) extends CuteFpeBundle{
 }
 
 class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
-    val Product0 = Vec(ReduceWidth/16, SInt(23.W))
-    val Product1 = Vec(ReduceWidth/16, SInt(23.W))
+    val Product0 = Vec(ReduceWidth/16, SInt(CuteFpeConfig.FullProductWidth.W))
+    val Product1 = Vec(ReduceWidth/16, SInt(CuteFpeConfig.FullProductWidth.W))
     val CMantissa = SInt(32.W)
     val RightShiftVec = Vec((ReduceWidth/8) + 1, UInt(10.W))
     val FP4ReduceRes = Option.when(cuteFpeConfig.enableFp4withsf)(

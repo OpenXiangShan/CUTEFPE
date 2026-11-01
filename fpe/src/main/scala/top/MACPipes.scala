@@ -3,6 +3,7 @@ package cute
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
+import CuteFpeConfig._
 
 // Stage 0:
 // - Compute the product of the mantissas and the sum of the exponents
@@ -28,7 +29,7 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
         val out = Output(new FPipe0Result)
     })
 
-    val CDecode = RawFloat.fromUInt(io.inC, 8, 24)
+    val CDecode = RawFloat.fromUInt(io.inC, 8, AccumulatorSignificandPrecision)
 
     // 1. Mantissa product
     if (DEBUG_FP8) {
@@ -399,7 +400,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     
     for(i <- 0 until ReduceWidth/16){
         val tempProduct0 = Wire(SInt(26.W))
-        tempProduct0 := Cat(io.in.Product0(i)(22, 0), 0.U(3.W)).asSInt
+        tempProduct0 := Cat(io.in.Product0(i)(FullProductWidth - 1, 0), 0.U(ProductAlignmentPadding.W)).asSInt
         ProductRShift(i) := tempProduct0 >> io.in.RightShiftVec(i)
         if (DEBUG_FP8) {
             printf("ProductRShift[%d]: %x\n", i.U,ProductRShift(i))
@@ -408,7 +409,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
 
     for(i <- 0 until ReduceWidth/16){
         val tempProduct1 = Wire(SInt(26.W))
-        tempProduct1 := Cat(io.in.Product1(i)(22, 0), 0.U(3.W)).asSInt
+        tempProduct1 := Cat(io.in.Product1(i)(FullProductWidth - 1, 0), 0.U(ProductAlignmentPadding.W)).asSInt
         ProductRShift(ReduceWidth/16 + i) := tempProduct1 >> io.in.RightShiftVec(ReduceWidth/16 + i)
         if (DEBUG_FP8) {
             printf("ProductRShift[%d]: %x\n", (i + ReduceWidth/16).U,ProductRShift(ReduceWidth/16 + i))
