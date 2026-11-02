@@ -3,6 +3,7 @@ package cute
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
+import CuteFpeConfig._
 
 class FPipe0Result(implicit p: Parameters) extends CuteFpeBundle{
     val Product0 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product0MultiplierParams.productWidth.W))
@@ -25,7 +26,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
     val Product0 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product0MultiplierParams.productWidth.W))
     val Product1 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product1MultiplierParams.productWidth.W))
     val CMantissa = SInt(32.W)
-    val RightShiftVec = Vec((ReduceWidth/8) + 1, UInt(10.W))
+    val RightShiftVec = Vec((ReduceWidth/8) + 1, UInt(AlignmentShiftWidth.W))
     val FP4ReduceRes = Option.when(cuteFpeConfig.enableFp4withsf)(
       Vec(ReduceWidth/4/16, SInt((10 + log2Ceil(16)).W))
     )
@@ -42,8 +43,8 @@ class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
 }
 
 class FPipe2Result(implicit p: Parameters) extends CuteFpeBundle{
-    val ReduceRes0 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W))
-    val ReduceRes1 = Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)) // Low/high-half reductions are shared by FP8 and INT8
+    val ReduceRes0 = Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W))
+    val ReduceRes1 = Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)) // Low/high-half reductions are shared by FP8 and INT8
     val CMantissa = SInt(32.W) // C的尾数
     val MaxExp = UInt(10.W)
     val opcode = UInt(FReduceComputeType.ComputeTypeBitWidth.W)

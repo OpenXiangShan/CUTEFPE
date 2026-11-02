@@ -3,6 +3,7 @@ package cute
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
+import CuteFpeConfig._
 
 class FReducePE(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
@@ -136,7 +137,8 @@ class FReducePE(implicit p: Parameters) extends CuteFpeModule {
       Option.when(cuteFpeConfig.enableMxfp8Fp32) {
         val sum = Wire(Vec(ReduceWidth/8/32, UInt(9.W)))
         for (i <- 0 until ReduceWidth/8/32) {
-            sum(i) := aScale.bits(i * 8 + 7, i * 8).asUInt.pad(10) + bScale.bits(i * 8 + 7, i * 8).asUInt.pad(10) - 254.U
+            sum(i) := aScale.bits(i * 8 + 7, i * 8).asUInt.pad(OperandExponentWidth) +
+                bScale.bits(i * 8 + 7, i * 8).asUInt.pad(OperandExponentWidth) - 254.U
         }
         sum
       }
@@ -158,7 +160,8 @@ class FReducePE(implicit p: Parameters) extends CuteFpeModule {
                         when(isMxfp8Op) {
                             // Add UE8M0 scaling factor to Vec A's exponent.
                             InputRegA.TF32Vec(i * 32 + j).exp :=
-                                sum(i).asSInt.pad(10) + ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(10)
+                                sum(i).asSInt.pad(OperandExponentWidth) +
+                                    ADecoder.io.out.TF32Vec(i * 32 + j).exp.pad(OperandExponentWidth)
                         }
                     }
                 }

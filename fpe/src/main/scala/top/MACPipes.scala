@@ -31,15 +31,6 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
 
     val CDecode = RawFloat.fromUInt(io.inC, 8, AccumulatorSignificandPrecision)
 
-    private def multiplierOperand(sig: SInt, params: CuteFpeMultiplierParams): UInt = {
-        val floatOperand = sig(params.width + params.padding - 1, params.padding)
-        if (params.useTwosComplement && params.padding > 0) {
-            Mux(FReduceComputeType.isInt8(io.opcode), sig(params.width - 1, 0), floatOperand)
-        } else {
-            floatOperand
-        }
-    }
-
     // 1. Mantissa product
     if (DEBUG_FP8) {
         for (i <- 0 until ReduceWidth/8) {
@@ -54,8 +45,8 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
         val Product0A = Wire(UInt(multiplier0.width.W))
         val Product0B = Wire(UInt(multiplier0.width.W))
 
-        Product0A := multiplierOperand(io.inA.TF32Vec(i).signed_sig, multiplier0)
-        Product0B := multiplierOperand(io.inB.TF32Vec(i).signed_sig, multiplier0)
+        Product0A := io.inA.TF32Vec(i).signed_sig.asUInt
+        Product0B := io.inB.TF32Vec(i).signed_sig.asUInt
 
         io.out.Product0(i) := (if (multiplier0.useTwosComplement) {
             Product0A.asSInt * Product0B.asSInt
@@ -74,8 +65,8 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
         val Product1A = Wire(UInt(multiplier1.width.W))
         val Product1B = Wire(UInt(multiplier1.width.W))
 
-        Product1A := multiplierOperand(io.inA.TF32Vec(i).signed_sig, multiplier1)
-        Product1B := multiplierOperand(io.inB.TF32Vec(i).signed_sig, multiplier1)
+        Product1A := io.inA.TF32Vec(i).signed_sig.asUInt
+        Product1B := io.inB.TF32Vec(i).signed_sig.asUInt
 
         io.out.Product1(i - ReduceWidth/16) := (if (multiplier1.useTwosComplement) {
             Product1A.asSInt * Product1B.asSInt
@@ -338,12 +329,17 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteFpeModule {
     val productMaxExp = Wire(UInt(10.W))
     productMaxExp := cmptreefp8p1.io.out
 
-    for(i <- 0 until ReduceWidth/8){
-        io.out.RightShiftVec(i) := productMaxExp - io.in.MulExpVec(i)
+    for(i <- 0 until ReduceWidth/8 + 1){
+        val rightShift = productMaxExp - io.in.MulExpVec(i)
+        // Larger shifts only produce sign bits; saturate instead of wrapping.
+        io.out.RightShiftVec(i) := Mux(
+            rightShift(rightShift.getWidth - 1, AlignmentShiftWidth).orR,
+            Fill(AlignmentShiftWidth, 1.U(1.W)),
+            rightShift(AlignmentShiftWidth - 1, 0)
+        )
         if (DEBUG_FP8)
         {printf("RightShiftVec[%d]: %x\n", i.U, io.out.RightShiftVec(i) )}
     }
-    io.out.RightShiftVec(ReduceWidth/8) := productMaxExp - io.in.MulExpVec(ReduceWidth/8)
 
     // 2. Process exceptions
     // the next stage can determine the result based on HasNaN, HasPInf, HasNInf, OnlyNZero
@@ -403,12 +399,12 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     })
 
     // Main path
-    val Product1 = Wire(Vec(ReduceWidth/16, SInt(26.W)))
-    val Product0 = Wire(Vec(ReduceWidth/16 + 1, SInt(26.W))) //每个向量的尾数右移结果
+    val Product1 = Wire(Vec(ReduceWidth/16, SInt(AlignedProductWidth.W)))
+    val Product0 = Wire(Vec(ReduceWidth/16 + 1, SInt(AlignedProductWidth.W))) //每个向量的尾数右移结果
 
-    val ProductRShift = Wire(Vec(ReduceWidth/8 + 1, SInt(26.W)))
+    val ProductRShift = Wire(Vec(ReduceWidth/8 + 1, SInt(AlignedProductWidth.W)))
 
-    ProductRShift(ReduceWidth/8) := io.in.CMantissa(25, 0).asSInt >> io.in.RightShiftVec(ReduceWidth/8)
+    ProductRShift(ReduceWidth/8) := io.in.CMantissa(AlignedProductWidth - 1, 0).asSInt >> io.in.RightShiftVec(ReduceWidth/8)
 
     //这里的问题是，如果c是负数，c为补码表示，右移完之后会变成全F，取负再相加后会变成1.与右移完之后变成0的情况不符
     if (DEBUG_FP8) {
@@ -416,7 +412,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     }
     
     for(i <- 0 until ReduceWidth/16){
-        val tempProduct0 = Wire(SInt(26.W))
+        val tempProduct0 = Wire(SInt(AlignedProductWidth.W))
         // Restore omitted product bits and align the fractional bits with FP32 C.
         tempProduct0 := Cat(io.in.Product0(i).asUInt,
             0.U((cuteFpeConfig.product0MultiplierParams.productPadding + ProductAlignmentPadding).W)).asSInt
@@ -427,7 +423,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
     }
 
     for(i <- 0 until ReduceWidth/16){
-        val tempProduct1 = Wire(SInt(26.W))
+        val tempProduct1 = Wire(SInt(AlignedProductWidth.W))
         tempProduct1 := Cat(io.in.Product1(i).asUInt,
             0.U((cuteFpeConfig.product1MultiplierParams.productPadding + ProductAlignmentPadding).W)).asSInt
         ProductRShift(ReduceWidth/16 + i) := tempProduct1 >> io.in.RightShiftVec(ReduceWidth/16 + i)
@@ -438,7 +434,7 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
 
     for(i <- 0 until ReduceWidth/16){
         Product0(i) := (if (cuteFpeConfig.enableInt8Int32) {
-            Mux(FReduceComputeType.isInt8(io.in.opcode), io.in.Product0(i).pad(26), ProductRShift(i))
+            Mux(FReduceComputeType.isInt8(io.in.opcode), io.in.Product0(i).pad(AlignedProductWidth), ProductRShift(i))
         } else {
             ProductRShift(i)
         })
@@ -449,26 +445,26 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
         })
     }
     Product0(ReduceWidth/16) := (if (cuteFpeConfig.enableInt8Int32) {
-        Mux(FReduceComputeType.isInt8(io.in.opcode), 0.S(26.W), ProductRShift(ReduceWidth/8))
+        Mux(FReduceComputeType.isInt8(io.in.opcode), 0.S(AlignedProductWidth.W), ProductRShift(ReduceWidth/8))
     } else {
         ProductRShift(ReduceWidth/8)
     })
 
-    val ProductRShiftF = Wire(Vec(ReduceWidth/16, SInt((26 + log2Ceil(P2AddNum)).W)))
+    val ProductRShiftF = Wire(Vec(ReduceWidth/16, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)))
     // The high-half reduction is shared by INT8 and FP8; FP8 still needs it
     // when INT8 conversion and bypass logic are omitted.
-    val Int8Product = Wire(Vec(ReduceWidth/16, SInt((26 + log2Ceil(P2AddNum)).W)))
+    val Int8Product = Wire(Vec(ReduceWidth/16, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)))
 
     for(i <- 0 until ReduceWidth/16){
-        ProductRShiftF(i) := Mux(io.in.SignVec(i), -Product0(i), Product0(i)).pad(26 + log2Ceil(P2AddNum))
+        ProductRShiftF(i) := Mux(io.in.SignVec(i), -Product0(i), Product0(i)).pad(AlignedProductWidth + log2Ceil(P2AddNum))
     }
 
     for(i <- 0 until ReduceWidth/16){
-        Int8Product(i) := Mux(io.in.SignVec(ReduceWidth/16 + i), -Product1(i), Product1(i)).pad(26 + log2Ceil(P2AddNum))
+        Int8Product(i) := Mux(io.in.SignVec(ReduceWidth/16 + i), -Product1(i), Product1(i)).pad(AlignedProductWidth + log2Ceil(P2AddNum))
     }
 
-    val SumResult0 = Wire(Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)))
-    val SumResult1 = Wire(Vec(P3AddNum, SInt((26 + log2Ceil(P2AddNum)).W)))
+    val SumResult0 = Wire(Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)))
+    val SumResult1 = Wire(Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)))
     for(i <- 0 until P3AddNum) {
         SumResult0(i) := ProductRShiftF.slice(i * P2AddNum, (i + 1) * P2AddNum).reduce(_ + _)
         SumResult1(i) := Int8Product.slice(i * P2AddNum, (i + 1) * P2AddNum).reduce(_ + _)

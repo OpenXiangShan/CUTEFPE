@@ -1,6 +1,10 @@
 package cute
 
+import chisel3.util.log2Ceil
+
 object CuteFpeConfig {
+  // Includes headroom for MXFP8 scaling applied before the input register.
+  val OperandExponentWidth: Int = 10
   // FP16/TF32 input significands: 10 fraction bits plus the implicit leading bit.
   val MaxSignificandPrecision: Int = 11
   val FullProductWidth: Int = 2 * MaxSignificandPrecision + 1
@@ -8,6 +12,8 @@ object CuteFpeConfig {
   val AccumulatorSignificandPrecision: Int = 24
   val ProductAlignmentPadding: Int =
     (AccumulatorSignificandPrecision - 1) - 2 * (MaxSignificandPrecision - 1)
+  val AlignedProductWidth: Int = FullProductWidth + ProductAlignmentPadding
+  val AlignmentShiftWidth: Int = log2Ceil(AlignedProductWidth)
 }
 
 case class CuteFpeMultiplierParams(width: Int, useTwosComplement: Boolean, padding: Int) {
