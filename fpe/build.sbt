@@ -49,7 +49,8 @@ addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chisel6Version cross C
 
 Compile / unmanagedSourceDirectories ++= {
   val cdeSrc = (baseDirectory.value / "../../../rocket-chip/cde/cde/src").getCanonicalFile
-  if (cdeSrc.exists) Seq(cdeSrc) else Nil
+  val hardfloatSrc = (baseDirectory.value / "../../../rocket-chip/hardfloat/hardfloat/src/main/scala").getCanonicalFile
+  Seq(cdeSrc, hardfloatSrc).filter(_.exists)
 }
 
 
