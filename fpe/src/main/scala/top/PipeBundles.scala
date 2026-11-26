@@ -5,7 +5,38 @@ import chisel3.util._
 import org.chipsalliance.cde.config._
 import CuteFpeConfig._
 
+// MX-only metadata follows the existing pipeline token/AllowIn registers.
+// A finite MX32 coefficient needs 14/42/70 signed bits for E2M1/E4M3/E5M2:
+// max |Q| = 4608, 49*2^35, 49*2^63 on lattices 2^-2/-18/-32.
+// Common E8M0 scales change only the exponent, never this coefficient.
+class MXBlockClass extends Bundle {
+    val isNaN = Bool()
+    val isInf = Bool()
+    val infSign = Bool()
+    val negativeZero = Bool()
+    val invalid = Bool()
+}
+
+class MXPipeMeta(implicit p: Parameters) extends CuteFpeBundle {
+    private val blocks = if (cuteFpeConfig.enableMxfp4Fp32) ReduceWidth / 128 else ReduceWidth / 256
+    val c = UInt(32.W)
+    val scale = Vec(blocks, SInt(9.W)) // sA+sB-254 in [-254,254].
+    val classes = Vec(blocks, new MXBlockClass)
+    val active = Vec(blocks, Bool())
+}
+
+class MXExactBlocks(implicit p: Parameters) extends CuteFpeBundle {
+    private val blocks = if (cuteFpeConfig.enableMxfp4Fp32) ReduceWidth / 128 else ReduceWidth / 256
+    private val precision = if (cuteFpeConfig.enableMxfp8Fp32) 70 else 24
+    val c = UInt(32.W)
+    val block = Vec(blocks, new hardfloat.RawFloat(10, precision))
+    val invalid = Vec(blocks, Bool())
+    val active = Vec(blocks, Bool())
+}
+
 class FPipe0Result(implicit p: Parameters) extends CuteFpeBundle{
+    val mx = Option.when(cuteFpeConfig.enableMxfp8Fp32 || cuteFpeConfig.enableMxfp4Fp32)(new MXPipeMeta)
+    val mxProductShift = Option.when(cuteFpeConfig.enableMxfp8Fp32)(Vec(ReduceWidth / 8, UInt(6.W)))
     val Product0 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product0MultiplierParams.productWidth.W))
     val Product1 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product1MultiplierParams.productWidth.W))
     val FP4ReduceRes = Option.when(cuteFpeConfig.enableFp4withsf)(
@@ -23,6 +54,8 @@ class FPipe0Result(implicit p: Parameters) extends CuteFpeBundle{
 }
 
 class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
+    val mx = Option.when(cuteFpeConfig.enableMxfp8Fp32 || cuteFpeConfig.enableMxfp4Fp32)(new MXPipeMeta)
+    val mxPartial = Option.when(cuteFpeConfig.enableMxfp8Fp32)(Vec(ReduceWidth / 64, SInt(70.W)))
     val Product0 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product0MultiplierParams.productWidth.W))
     val Product1 = Vec(ReduceWidth/16, SInt(cuteFpeConfig.product1MultiplierParams.productWidth.W))
     val CMantissa = SInt(32.W)
@@ -43,6 +76,7 @@ class FPipe1Result(implicit p: Parameters) extends CuteFpeBundle{
 }
 
 class FPipe2Result(implicit p: Parameters) extends CuteFpeBundle{
+    val mx = Option.when(cuteFpeConfig.enableMxfp8Fp32 || cuteFpeConfig.enableMxfp4Fp32)(new MXExactBlocks)
     val ReduceRes0 = Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W))
     val ReduceRes1 = Vec(P3AddNum, SInt((AlignedProductWidth + log2Ceil(P2AddNum)).W)) // Low/high-half reductions are shared by FP8 and INT8
     val CMantissa = SInt(32.W) // C的尾数
@@ -55,6 +89,8 @@ class FPipe2Result(implicit p: Parameters) extends CuteFpeBundle{
 }
 
 class FPipe3Result(implicit p: Parameters) extends CuteFpeBundle{
+    val mx = Option.when(cuteFpeConfig.enableMxfp8Fp32 || cuteFpeConfig.enableMxfp4Fp32)(new MXExactBlocks)
+    val mxFlags = Option.when(cuteFpeConfig.enableMxfp8Fp32 || cuteFpeConfig.enableMxfp4Fp32)(UInt(5.W))
     // val ReduceRes = SInt(32.W) //归约计算结果
     val ReduceRes0 = SInt((32).W)
     val ReduceRes1 = SInt((32).W) // Low/high-half reductions are shared by FP8 and INT8

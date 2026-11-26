@@ -18,6 +18,9 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
         val inBFP4Vec = Option.when(cuteFpeConfig.enableFp4withsf)(
             Input(Vec(ReduceWidth/4, SInt(5.W)))
         )
+        val inFP4Sign = Option.when(cuteFpeConfig.enableMxfp4Fp32)(
+            Input(Vec(ReduceWidth / 4, Bool()))
+        )
         val inAscale = Option.when(cuteFpeConfig.enableScalingFactor)(
             Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         )
@@ -25,11 +28,86 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
             Input(Vec(ReduceWidth/4/MinGroupSize, UInt(8.W)))
         )
         val inC = Input(UInt(32.W))
+        val inLiveK = Option.when(cuteFpeConfig.enableMxfp4Fp32 || cuteFpeConfig.enableMxfp8Fp32)(
+            Input(UInt(log2Ceil(ReduceWidth / 4 + 1).W)))
         val opcode = Input(UInt(FReduceComputeType.ComputeTypeBitWidth.W))
         val out = Output(new FPipe0Result)
     })
 
     val CDecode = RawFloat.fromUInt(io.inC, 8, AccumulatorSignificandPrecision)
+
+    io.out.mx.foreach { mx =>
+        mx.c := io.inC
+        val isFP4 = io.opcode === FReduceComputeType.Mxfp4F32
+        for (block <- mx.scale.indices) {
+            mx.active(block) := (block * 32).U < io.inLiveK.get &&
+                (isFP4 || (block < ReduceWidth / 256).B)
+            mx.scale(block) := io.inAscale.get(block).zext +& io.inBscale.get(block).zext - 254.S
+            val cls = mx.classes(block)
+            cls := 0.U.asTypeOf(new MXBlockClass)
+            if (cuteFpeConfig.enableMxfp8Fp32 && block < ReduceWidth / 256) {
+                // Only the classification fold is ordered. All finite products
+                // and sums remain exact/parallel. A qNaN prefix suppresses a
+                // later Inf+-Inf add, but never suppresses a product's own NV.
+                var nan: Bool = false.B
+                var inf: Bool = false.B
+                var infSign: Bool = false.B
+                var invalid: Bool = false.B
+                var negativeZeros: Bool = true.B
+                for (lane <- block * 32 until (block + 1) * 32) {
+                    val a = io.inA.TF32Vec(lane)
+                    val b = io.inB.TF32Vec(lane)
+                    val sign = a.sign ^ b.sign
+                    val productInvalid = io.inA.mxSignalingNaN.get(lane) ||
+                        io.inB.mxSignalingNaN.get(lane) ||
+                        (a.exception.is_inf && b.exception.is_zero) ||
+                        (b.exception.is_inf && a.exception.is_zero)
+                    val productNaN = a.exception.is_nan || b.exception.is_nan || productInvalid
+                    val productInf = !productNaN && (a.exception.is_inf || b.exception.is_inf)
+                    val oppositeInf = !nan && !productNaN && inf && productInf && (infSign =/= sign)
+                    invalid = invalid || productInvalid || oppositeInf
+                    nan = nan || productNaN || oppositeInf
+                    infSign = Mux(inf, infSign, sign)
+                    inf = !nan && (inf || productInf)
+                    negativeZeros = negativeZeros && (lane.U >= io.inLiveK.get ||
+                        ((a.exception.is_zero || b.exception.is_zero) && sign))
+                }
+                cls.isNaN := nan
+                cls.isInf := inf
+                cls.infSign := infSign
+                cls.negativeZero := negativeZeros
+                cls.invalid := invalid
+            }
+            if (cuteFpeConfig.enableMxfp4Fp32) {
+                val negativeZeros = (block * 32 until (block + 1) * 32).map { lane =>
+                    lane.U >= io.inLiveK.get ||
+                        ((io.inAFP4Vec.get(lane) === 0.S || io.inBFP4Vec.get(lane) === 0.S) &&
+                            io.inFP4Sign.get(lane))
+                }.reduce(_ && _)
+                when(isFP4) {
+                    cls := 0.U.asTypeOf(new MXBlockClass)
+                    cls.negativeZero := negativeZeros
+                }
+            }
+            // OCP MX v1.0 section 5.1: a NaN scale ignores element encodings.
+            // Its contribution is a quiet NaN, not an evaluated dot with NV.
+            val scaleNaN = io.inAscale.get(block) === 255.U || io.inBscale.get(block) === 255.U
+            when(scaleNaN) {
+                cls.isNaN := true.B
+                cls.isInf := false.B
+                cls.invalid := false.B
+            }
+        }
+    }
+    io.out.mxProductShift.foreach { shifts =>
+        for (lane <- shifts.indices) {
+            val expSum = io.inA.TF32Vec(lane).exp +& io.inB.TF32Vec(lane).exp
+            // E4 product core has 6 fraction bits, E5 has 4.
+            // Product lattice shifts: eA+eB+12 in [0,28], or +28 in [0,58].
+            shifts(lane) := (expSum + Mux(io.opcode === FReduceComputeType.Mxfp8e4m3F32,
+                12.S, 28.S)).asUInt
+        }
+    }
 
     // 1. Mantissa product
     if (DEBUG_FP8) {
@@ -177,16 +255,21 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
 
         // Number of blocks in mxfp4 is half of that in nvfp4
         for (i <- 0 until ReduceWidth/4/MinGroupSize){
-            FP4AScaleExceptionVec.get(i) := Mux(
-                io.opcode === FReduceComputeType.Mxfp4F32,
-                mxfp4AScaleExceptionVec.get(i / 2),
-                FP4AScaleDecoder.get.io.out(i).exception
-            )
-            FP4BScaleExceptionVec.get(i) := Mux(
-                io.opcode === FReduceComputeType.Mxfp4F32,
-                mxfp4BScaleExceptionVec.get(i / 2),
-                FP4BScaleDecoder.get.io.out(i).exception
-            )
+            if (cuteFpeConfig.enableMxfp4Fp32) {
+                FP4AScaleExceptionVec.get(i) := Mux(
+                    io.opcode === FReduceComputeType.Mxfp4F32,
+                    mxfp4AScaleExceptionVec.get(i / 2),
+                    FP4AScaleDecoder.get.io.out(i).exception
+                )
+                FP4BScaleExceptionVec.get(i) := Mux(
+                    io.opcode === FReduceComputeType.Mxfp4F32,
+                    mxfp4BScaleExceptionVec.get(i / 2),
+                    FP4BScaleDecoder.get.io.out(i).exception
+                )
+            } else {
+                FP4AScaleExceptionVec.get(i) := FP4AScaleDecoder.get.io.out(i).exception
+                FP4BScaleExceptionVec.get(i) := FP4BScaleDecoder.get.io.out(i).exception
+            }
         }
 
         // 3. Generate the scale factor in FP
@@ -266,8 +349,17 @@ class FReduceMACPipe0(implicit p: Parameters) extends CuteFpeModule {
         if (i < ReduceWidth/4/MinGroupSize) {
             FP4AScaleExceptionVec.zip(FP4BScaleExceptionVec).foreach {
                 case (aScaleExceptionVec, bScaleExceptionVec) =>
-                    AException := Mux(isFp4WithScaleOp, aScaleExceptionVec(i), AException)
-                    BException := Mux(isFp4WithScaleOp, bScaleExceptionVec(i), BException)
+                    AException := Mux(isFp4WithScaleOp, aScaleExceptionVec(i), io.inA.TF32Vec(i).exception)
+                    BException := Mux(isFp4WithScaleOp, bScaleExceptionVec(i), io.inB.TF32Vec(i).exception)
+            }
+        }
+        if (cuteFpeConfig.enableMxfp8Fp32) {
+            when(io.opcode === FReduceComputeType.Mxfp8e4m3F32 ||
+                io.opcode === FReduceComputeType.Mxfp8e5m2F32) {
+                // E8M0 byte b belongs to logical FP8 elements [32*b,32*b+31],
+                // exactly as scaleSum's exponent merge in FReducePE.
+                AException.is_nan := io.inA.TF32Vec(i).exception.is_nan || io.inAscale.get(i / 32) === 255.U
+                BException.is_nan := io.inB.TF32Vec(i).exception.is_nan || io.inBscale.get(i / 32) === 255.U
             }
         }
 
@@ -317,6 +409,32 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteFpeModule {
         val in = Input(new FPipe0Result)
         val out = Output(new FPipe1Result)
     })
+
+    io.out.mx.zip(io.in.mx).foreach { case (out, in) => out := in }
+    io.out.mxPartial.foreach { partials =>
+        val terms = (0 until ReduceWidth / 8).map { lane =>
+            val (product, multiplier) = if (lane < ReduceWidth / 16) {
+                (io.in.Product0(lane), cuteFpeConfig.product0MultiplierParams)
+            } else {
+                (io.in.Product1(lane - ReduceWidth / 16), cuteFpeConfig.product1MultiplierParams)
+            }
+            val fractionBits = MaxSignificandPrecision - 1
+            // These discarded bits are known zero padding, not rounding.
+            val core = Mux(io.in.opcode === FReduceComputeType.Mxfp8e4m3F32,
+                product.asUInt >> (2 * (fractionBits - 3) - multiplier.productPadding),
+                product.asUInt >> (2 * (fractionBits - 2) - multiplier.productPadding))
+            val magnitude = Wire(UInt(69.W))
+            magnitude := core << io.in.mxProductShift.get(lane)
+            val finite = !io.in.ExceptionVec(lane).is_nan && !io.in.ExceptionVec(lane).is_inf
+            val term = Wire(SInt(70.W))
+            term := Mux(finite, Mux(io.in.SignVec(lane),
+                -magnitude.zext, magnitude.zext), 0.S)
+            term
+        }
+        for (group <- partials.indices) {
+            partials(group) := terms.slice(group * 8, (group + 1) * 8).reduce(_ +& _)
+        }
+    }
 
     // Main path
     // 1. Continue to find the maximum exponent
@@ -376,6 +494,10 @@ class FReduceMACPipe1(implicit p: Parameters) extends CuteFpeModule {
         // FP4Reduce sum
         for (i <- 0 until ReduceWidth/4/16){
             io.out.FP4ReduceRes.get(i) := io.in.FP4ReduceRes.get.slice(i * FP4P1AddNum, (i + 1) * FP4P1AddNum).reduce(_ + _)
+            when(io.in.opcode === FReduceComputeType.Mxfp4F32) {
+                io.out.FP4ReduceRes.get(i) :=
+                    io.in.FP4ReduceRes.get.slice(i * FP4P1AddNum, (i + 1) * FP4P1AddNum).reduce(_ +& _)
+            }
             if (DEBUG_FP4) {
                 printf("FP4ReduceRes[%d]: %x\n", i.U, io.out.FP4ReduceRes.get(i))
             }
@@ -397,6 +519,44 @@ class FReduceMACPipe2(implicit p: Parameters) extends CuteFpeModule {
         val in = Input(new FPipe1Result)
         val out = Output(new FPipe2Result)
     })
+
+    io.out.mx.foreach { mx =>
+        val meta = io.in.mx.get
+        val isFP4 = io.in.opcode === FReduceComputeType.Mxfp4F32
+        val precision = if (cuteFpeConfig.enableMxfp8Fp32) 70 else 24
+        val coefficientWidth = if (cuteFpeConfig.enableMxfp8Fp32) 70 else 14
+        mx.c := meta.c
+        mx.active := meta.active
+        for (block <- mx.block.indices) {
+            val coefficient = WireDefault(0.S(coefficientWidth.W))
+            if (cuteFpeConfig.enableMxfp8Fp32 && block < ReduceWidth / 256) {
+                coefficient := io.in.mxPartial.get.slice(block * 4, (block + 1) * 4).reduce(_ +& _)
+            }
+            if (cuteFpeConfig.enableMxfp4Fp32) {
+                when(isFP4) {
+                    // Two existing 16-element FP4 partials are ONE MX32,
+                    // not two blocks and not a global 64-element reduction.
+                    coefficient := io.in.FP4ReduceRes.get(block * 2) +&
+                        io.in.FP4ReduceRes.get(block * 2 + 1)
+                }
+            }
+            val normalized = hardfloat.resizeRawFloat(10, precision,
+                hardfloat.rawFloatFromIN(true.B, coefficient))
+            val cls = meta.classes(block)
+            val raw = mx.block(block)
+            raw := normalized
+            raw.sExp := normalized.sExp + meta.scale(block) +
+                Mux(isFP4, (-2).S, Mux(io.in.opcode === FReduceComputeType.Mxfp8e4m3F32, (-18).S, (-32).S))
+            raw.isNaN := cls.isNaN
+            raw.isInf := cls.isInf
+            raw.isZero := coefficient === 0.S && !cls.isNaN && !cls.isInf
+            raw.sign := Mux(cls.isInf, cls.infSign,
+                Mux(coefficient === 0.S, cls.negativeZero, normalized.sign))
+            // All input NaNs have been quieted; original sNaN NV is separate.
+            when(cls.isNaN) { raw.sig := (BigInt(1) << (precision - 2)).U }
+            mx.invalid(block) := cls.invalid
+        }
+    }
 
     // Main path
     val Product1 = Wire(Vec(ReduceWidth/16, SInt(AlignedProductWidth.W)))
@@ -549,6 +709,40 @@ class FReduceMACPipe3(implicit p: Parameters) extends CuteFpeModule {
         val out = Output(new FPipe3Result)
     })
 
+    io.out.mx.zip(io.in.mx).foreach { case (out, in) =>
+        out := in
+        val precision = if (cuteFpeConfig.enableMxfp8Fp32) 70 else 24
+        var c = in.c
+        var flags = 0.U(5.W)
+        // At 256 bits this is precisely block0. Wider tuples preserve order
+        // too, but cascade more add/round logic and need separate timing proof.
+        for (block <- 0 until (in.block.length + 1) / 2) {
+            val add = Module(new hardfloat.AddRawFN(10, precision))
+            add.io.subOp := false.B
+            add.io.roundingMode := hardfloat.consts.round_near_even
+            val cRaw = hardfloat.resizeRawFloat(10, precision, hardfloat.rawFloatFromFN(8, 24, c))
+            val contribution = in.block(block)
+            add.io.a := cRaw
+            add.io.b := contribution
+            // A raw zero has no meaningful exponent. Our exact contributions
+            // can be far below FP32's zero encoding: align a zero with the
+            // other operand rather than letting its arbitrary exponent win.
+            when(cRaw.isZero) { add.io.a.sExp := contribution.sExp }
+            when(contribution.isZero) { add.io.b.sExp := cRaw.sExp }
+            val round = Module(new hardfloat.RoundAnyRawFNToRecFN(10, precision + 2, 8, 24, 0))
+            round.io.in := add.io.rawOut
+            round.io.invalidExc := add.io.invalidExc || in.invalid(block)
+            round.io.infiniteExc := false.B
+            round.io.roundingMode := hardfloat.consts.round_near_even
+            round.io.detectTininess := hardfloat.consts.tininess_afterRounding
+            val active = in.active(block)
+            c = Mux(active, hardfloat.fNFromRecFN(8, 24, round.io.out), c)
+            flags = flags | Mux(active, round.io.exceptionFlags, 0.U)
+        }
+        out.c := c
+        io.out.mxFlags.get := flags
+    }
+
     val SumResult0 = Wire(Vec(P3AddNum, SInt((32 + 3).W)))
     val SumResult1 = Wire(Vec(P3AddNum, SInt((32).W)))
     val isFp4WithScaleOp = io.in.opcode === FReduceComputeType.Nvfp4F32 || io.in.opcode === FReduceComputeType.Mxfp4F32
@@ -586,6 +780,7 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteFpeModule {
     val io = IO(new Bundle{
         val in = Input(new FPipe3Result)
         val out = UInt(ResultWidth.W)
+        val flags = Output(UInt(5.W))
     })
 
     val ReduceResF = Wire(SInt(32.W))
@@ -691,4 +886,45 @@ class FReduceMACPipe4(implicit p: Parameters) extends CuteFpeModule {
     } else {
         Mux(IsException, ExceptionBits, Result)
     })
+    io.flags := 0.U
+    io.in.mx.foreach { mx =>
+        // For a 256b tuple the only pending block is FP4's second MX32.
+        // Its <=14b coefficient fits exactly in 24b; this is not pre-rounding.
+        val precision = if (ReduceWidth == 256 || !cuteFpeConfig.enableMxfp8Fp32) 24 else 70
+        var c = mx.c
+        var flags = io.in.mxFlags.get
+        for (block <- (mx.block.length + 1) / 2 until mx.block.length) {
+            val add = Module(new hardfloat.AddRawFN(10, precision))
+            add.io.subOp := false.B
+            add.io.roundingMode := hardfloat.consts.round_near_even
+            val cRaw = hardfloat.resizeRawFloat(10, precision, hardfloat.rawFloatFromFN(8, 24, c))
+            add.io.a := cRaw
+            val pending = Wire(new hardfloat.RawFloat(10, precision))
+            pending := mx.block(block)
+            // At 256b, only FP4 block1 can be active here: <=14 significant
+            // bits, with exact zero padding below bit 56 in a 70b raw value.
+            // Do not call the vendored narrowing resize helper: it expects
+            // extra raw G/R bits above sigWidth and cannot slice this payload.
+            pending.sig := mx.block(block).sig >> (mx.block(block).sigWidth - precision)
+            add.io.b := pending
+            when(cRaw.isZero) { add.io.a.sExp := pending.sExp }
+            when(pending.isZero) { add.io.b.sExp := cRaw.sExp }
+            val round = Module(new hardfloat.RoundAnyRawFNToRecFN(10, precision + 2, 8, 24, 0))
+            round.io.in := add.io.rawOut
+            round.io.invalidExc := add.io.invalidExc || mx.invalid(block)
+            round.io.infiniteExc := false.B
+            round.io.roundingMode := hardfloat.consts.round_near_even
+            round.io.detectTininess := hardfloat.consts.tininess_afterRounding
+            val active = mx.active(block)
+            c = Mux(active, hardfloat.fNFromRecFN(8, 24, round.io.out), c)
+            flags = flags | Mux(active, round.io.exceptionFlags, 0.U)
+        }
+        val isMX = (cuteFpeConfig.enableMxfp4Fp32.B && io.in.opcode === FReduceComputeType.Mxfp4F32) ||
+            (cuteFpeConfig.enableMxfp8Fp32.B &&
+                (io.in.opcode === FReduceComputeType.Mxfp8e4m3F32 || io.in.opcode === FReduceComputeType.Mxfp8e5m2F32))
+        when(isMX) {
+            io.out := c
+            io.flags := flags
+        }
+    }
 }

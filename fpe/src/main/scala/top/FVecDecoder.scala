@@ -15,6 +15,7 @@ class FDecodeResult(implicit p: Parameters) extends CuteFpeBundle{
             OperandExponentWidth, MaxSignificandPrecision - cuteFpeConfig.product1MultiplierParams.padding
         ))
     )
+    val mxSignalingNaN = Option.when(cuteFpeConfig.enableMxfp8Fp32)(Vec(ReduceWidth / 8, Bool()))
 }
 
 class FPScaleDecoder(implicit p: Parameters) extends CuteFpeModule {
@@ -77,6 +78,13 @@ class FVecDecoder(implicit p: Parameters) extends CuteFpeModule {
     val isE5M2 = io.opcode === FReduceComputeType.Mxfp8e5m2F32 || io.opcode === FReduceComputeType.Fp8e5m2F32
     val isDefaultTF32Vec = !(isF16 || isBF16 || isTF32 || isE4M3 || isE5M2)
     val isDefaultTF32VecHigh = !(isE4M3 || isE5M2)
+
+    io.out.mxSignalingNaN.foreach { signaling =>
+        for (i <- 0 until ReduceWidth / 8) {
+            val code = io.in(8 * i + 7, 8 * i)
+            signaling(i) := isE5M2 && code(6, 2).andR && code(1, 0).orR && !code(1)
+        }
+    }
 
     for(i <- 0 until ReduceWidth/32){
         val Bits8  = io.in(8 * i + 7, 8 * i)
